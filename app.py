@@ -49,6 +49,17 @@ div[data-testid="stRadio"] div[role="radiogroup"]>label{background:var(--soft);b
 div[data-testid="stRadio"] div[role="radiogroup"]>label:hover{border-color:var(--teal)}
 div[data-testid="stRadio"] div[role="radiogroup"]>label:has(input:checked){background:var(--navy);border-color:var(--navy)}
 div[data-testid="stRadio"] div[role="radiogroup"]>label:has(input:checked) p{color:#fff !important;font-weight:600}
+.drl{display:flex;flex-direction:column;gap:10px}
+.drl-leg{display:flex;gap:18px;font-size:.82rem;color:#5C7691;flex-wrap:wrap}.drl-leg i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.drl-row{display:grid;grid-template-columns:minmax(150px,1.1fr) 3fr minmax(130px,.8fr);gap:14px;align-items:center;padding:8px 12px;background:#F8FAFC;border:1px solid #E3EBF3;border-radius:12px}
+.drl-n{font-weight:600;color:#073763;font-size:.9rem;word-break:break-word}.rn{font-weight:400;color:#5C7691;font-size:.75rem}.rn.warn{color:#8a5a00;background:#fff0cc;border-radius:6px;padding:0 5px}
+.bar{display:flex;align-items:center;gap:8px;margin:3px 0}
+.trk{flex:1;height:16px;background:#EAF0F6;border-radius:6px;overflow:hidden}
+.trk div{height:100%;border-radius:6px}.b1{background:#073763}.b2{background:#9ccbe0}
+.bar span{width:58px;text-align:right;font-size:.78rem;font-weight:600;color:#073763}
+.rb{display:inline-block;border-radius:999px;padding:3px 10px;font-size:.78rem;font-weight:600;white-space:nowrap}
+.rb.ok{background:#d5eedd;color:#1e6b3a}.rb.bad{background:#f8d0d0;color:#9c1c1c}.rb.na{background:#eceff3;color:#5C7691}
+@media (max-width:768px){.drl-row{grid-template-columns:1fr}}
 .side-t{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#a9c7de !important;margin:14px 0 8px 2px}
 .side-card{background:rgba(255,255,255,.1);border-radius:12px;padding:10px 14px;margin-top:10px;font-size:.85rem;line-height:1.5}
 @media (max-width:768px){.block-container{padding:3rem .6rem 2rem !important}.hero{padding:14px 16px}.hero .t{font-size:1.2rem}.badge{margin-left:0}}
@@ -133,7 +144,7 @@ if "master" not in st.session_state:
 cfg = st.session_state.cfg; master = st.session_state.master
 if st.session_state.get("flash"): st.success(st.session_state.pop("flash"))
 
-MENU = ["1 · Import Data", "2 · Database Dosis Pasien", "3 · Download BAPETEN", "⚙️ Parameter"]
+MENU = ["1 · Import Data", "2 · Database Dosis Pasien", "3 · Download BAPETEN", "4 · Dashboard", "⚙️ Parameter"]
 with st.sidebar:
     if logo: st.markdown(f'<div><img src="data:image/png;base64,{logo}" style="width:170px;margin:4px 0 6px 4px"></div>', unsafe_allow_html=True)
     st.markdown('<div class="side-t">Alur kerja</div>', unsafe_allow_html=True)
@@ -312,6 +323,49 @@ elif menu == MENU[2]:
                     fmt = {col: "{:.2f}" for col in rk.columns if col not in ("Jenis Pemeriksaan", "Jumlah Sampel", "Status")}
                     sty = rk.style.format(fmt, na_rep="-"); sty = (sty.map if hasattr(sty, "map") else sty.applymap)(_c, subset=["Status"])
                     st.dataframe(sty, use_container_width=True, hide_index=True)
+
+# =================================================== MENU 4 DASHBOARD
+elif menu == MENU[3]:
+    present = [m for m in dc.MODS if (master["Modalitas"] == m).any()]
+    if not present:
+        st.info("Database masih kosong. Mulai dari menu 1 · Import Data.")
+    else:
+        with st.container(border=True):
+            step(4, "Dashboard DRL", "Typical value lokal (median / Quartil 2) dibandingkan dengan DRL nasional. Hanya data valid (dosis lengkap) yang dihitung.")
+            mod = st.radio("Modalitas", present, horizontal=True, format_func=modlabel, key="m4mod")
+            spec = dc.MODS[mod]; ex = spec["exam"]
+            d = computed(mod); dv = d[d["Cek"] == "OK"]
+            f1, f2, f3, f4 = st.columns([1, 1, 1, 2])
+            kat = f1.selectbox("Kategori usia", ["Dewasa", "Anak", "Bayi", "Semua"], key=f"k4_{mod}")
+            dari = f2.date_input("Dari tanggal", value=None, key=f"d14_{mod}", format="DD/MM/YYYY"); sampai = f3.date_input("Sampai tanggal", value=None, key=f"d24_{mod}", format="DD/MM/YYYY")
+            exams = f4.multiselect("Jenis pemeriksaan", sorted(dv[ex].dropna().unique()), key=f"x4_{mod}", placeholder="Semua jenis pemeriksaan")
+            if kat != "Dewasa": st.caption("DRL nasional hanya berlaku untuk dewasa, sehingga perbandingan hanya tampil pada kategori Dewasa.")
+            rk = dc.rekap(mod, dv, cfg, kat, dari, sampai, exams or None)
+        if rk.empty:
+            st.info("Belum ada data valid untuk filter ini. Isi dosis di menu 2 terlebih dahulu.")
+        else:
+            labs = [lab for _, lab, _ in spec["metrics"] if f"{lab} Acuan" in rk.columns]
+            main = labs[0] if labs else spec["metrics"][0][1]
+            _ov = pd.Series(False, index=rk.index); _hr = pd.Series(False, index=rk.index)
+            for lab_ in labs:
+                a_ = pd.to_numeric(rk[f"{lab_} Acuan"], errors="coerce"); q_ = pd.to_numeric(rk[f"{lab_} Median (Q2)"], errors="coerce")
+                _hr |= a_.notna(); _ov |= (a_.notna() & (q_ > a_))
+            if kat != "Dewasa": _ov[:] = False; _hr[:] = False
+            over = int(_ov.sum()); okc = int((_hr & ~_ov).sum()); noref = len(rk) - over - okc
+            k = st.columns(4)
+            k[0].metric("Total pemeriksaan valid", f"{int(rk['Jumlah Sampel'].sum()):,}"); k[1].metric("Jenis pemeriksaan", len(rk))
+            k[2].metric("Di atas DRL nasional", int(over)); k[3].metric("Sesuai / belum ada acuan", f"{int(okc)} / {int(noref)}")
+            with st.container(border=True):
+                if len(labs) > 1: lab = st.radio("Parameter dosis", labs, horizontal=True, key=f"p4_{mod}")
+                else: lab = main
+                st.markdown(f"**{lab}** · urut dari rasio tertinggi terhadap nasional")
+                q = rk.copy(); acc = f"{lab} Acuan"
+                if acc in q.columns: q["_r"] = pd.to_numeric(q[f"{lab} Median (Q2)"], errors="coerce") / pd.to_numeric(q[acc], errors="coerce"); q = q.sort_values("_r", ascending=False, na_position="last")
+                st.markdown(dc.drl_html(q, lab), unsafe_allow_html=True)
+                st.caption("Typical value = median (Quartil 2) dosis lokal. Batang biru tua = lokal, biru muda = DRL nasional. Persentase > 100% berarti typical value lokal melebihi DRL nasional. n < 10 berarti sampel belum cukup untuk dijadikan typical value.")
+            with st.expander("Tabel lengkap (Q2, Q3, nasional)"):
+                fmt = {c_: "{:.2f}" for c_ in rk.columns if c_ not in ("Jenis Pemeriksaan", "Jumlah Sampel", "Status")}
+                st.dataframe(rk.style.format(fmt, na_rep="-"), use_container_width=True, hide_index=True)
 
 # =================================================== PARAMETER
 else:
