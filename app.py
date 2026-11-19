@@ -257,25 +257,54 @@ elif menu == MENU[2]:
         st.info("Database masih kosong. Mulai dari menu 1 · Import Data.")
     else:
         with st.container(border=True):
-            step(3, "Download format BAPETEN", "Pilih modalitas, jenis pemeriksaan, dan kategori usia. Hanya data valid (dosis lengkap) yang masuk.")
+            step(3, "Download format BAPETEN", "Satu file per jenis pemeriksaan dan kategori usia, kolomnya sama dengan template Target BAPETEN.")
             mod = st.radio("Modalitas", present, horizontal=True, format_func=modlabel, key="m3mod")
             spec = dc.MODS[mod]; ex = spec["exam"]
             d = computed(mod); dv = d[d["Cek"] == "OK"]
             c1, c2 = st.columns([2, 1])
             exams = c1.multiselect("Jenis pemeriksaan", sorted(dv[ex].dropna().unique()), key=f"x3_{mod}", placeholder="Semua jenis pemeriksaan")
             kat = c2.selectbox("Kategori usia", ["Dewasa", "Anak", "Bayi", "Semua kategori"], key=f"k3_{mod}")
-            g1, g2, g3 = st.columns([1, 1, 1])
+            g1, g2, g3 = st.columns(3)
             dari = g1.date_input("Dari tanggal", value=None, key=f"d13_{mod}", format="DD/MM/YYYY"); sampai = g2.date_input("Sampai tanggal", value=None, key=f"d23_{mod}", format="DD/MM/YYYY")
-            incl = g3.checkbox("Sertakan nama pasien", value=False, help="Nama tidak diperlukan untuk laporan; hanya Kode Pasien (RN).")
-            sel = dv[dv[ex].isin(exams)] if exams else dv
-            sel = in_period(sel, dari, sampai)
+            incl = g3.checkbox("Sertakan nama pasien", value=False, help="Kolom Nama pada template BAPETEN bersifat opsional ('Jika Ada'). Default dikosongkan; Kode Pasien (RN) tetap diisi.")
+            bb = g3.checkbox("Sertakan data tanpa berat badan", value=False, help="Berat badan wajib di template BAPETEN. Di RIS banyak yang bernilai 0 (kosong).")
+            sel = in_period(dv, dari, sampai)
             cats = ["Dewasa", "Anak", "Bayi"] if kat == "Semua kategori" else [kat]
-            data_out = sel if kat == "Semua kategori" else sel[sel["Kategori usia"] == kat]
-            rekaps = {c: dc.rekap(mod, sel, cfg, c, dari, sampai, exams or None) for c in cats}
-            m = st.columns(3); m[0].metric("Data valid terpilih", f"{len(data_out):,}"); m[1].metric("Tidak valid (dikecualikan)", f"{int((d['Cek'] != 'OK').sum()):,}")
-            m[2].metric("Jenis pemeriksaan", int(data_out[ex].nunique()))
-            for c, rk in rekaps.items():
-                if len(cats) > 1: st.markdown(f"**{c}**")
+            per = "semua" if not (dari or sampai) else f"{dari or '...'} s/d {sampai or '...'}"
+            if mod not in dc.BAPETEN_FORM:
+                st.warning("Template BAPETEN untuk Dental belum tersedia. Unduhan memakai format Excel internal (Rekap + Data). Kirim template Dental bila sudah ada.")
+                rekaps = {c: dc.rekap(mod, sel, cfg, c, dari, sampai, exams or None) for c in cats}
+                data_out = sel[sel[ex].isin(exams)] if exams else sel
+                if kat != "Semua kategori": data_out = data_out[data_out["Kategori usia"] == kat]
+                xl = dc.to_excel(mod, data_out.drop(columns=["_rid"], errors="ignore"), rekaps, cfg, dict(rs=RS, periode=per), include_name=incl)
+                st.download_button("⬇️ Download Excel", xl, file_name=f"Dosis_{mod}_{kat.replace(' ', '')}_{dt.date.today():%Y%m%d}.xlsx", type="primary", disabled=len(data_out) == 0,
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            else:
+                combos, dropped = dc.bapeten_combos(mod, sel, exams, cats, require_bb=not bb)
+                m = st.columns(3); m[0].metric("File yang dihasilkan", len(combos)); m[1].metric("Total baris data", f"{sum(c['n'] for c in combos):,}")
+                m[2].metric("Dikecualikan (data wajib kosong)", f"{dropped:,}", help="Dosis lengkap tetapi Gender / Umur / Berat Badan (dan fase CT) kosong.")
+                if not combos:
+                    st.caption("Belum ada data yang memenuhi syarat. Isi dosis di menu 2 terlebih dahulu.")
+                else:
+                    tbl = pd.DataFrame([{"Jenis pemeriksaan": c["exam"], "Kategori usia": c["kategori"], "Jumlah data": c["n"],
+                                         "Keterangan": "OK" if c["n"] >= 10 else "Kurang dari 10 data (minimal BAPETEN)"} for c in combos])
+                    st.dataframe(tbl, use_container_width=True, hide_index=True)
+                    if len(combos) == 1:
+                        c0 = combos[0]
+                        st.download_button("⬇️ Download Excel BAPETEN", dc.bapeten_xlsx(mod, c0["df"], incl), file_name=dc.bapeten_filename(mod, c0), type="primary",
+                                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    else:
+                        st.download_button(f"⬇️ Download {len(combos)} file BAPETEN (ZIP)", dc.bapeten_zip(mod, combos, incl),
+                                           file_name=f"BAPETEN_{dc.BAPETEN_FORM[mod]}_{dt.date.today():%Y%m%d}.zip", type="primary", mime="application/zip")
+                        if len(combos) <= 15:
+                            with st.expander("Atau unduh satu per satu"):
+                                for i, c in enumerate(combos):
+                                    st.download_button(f"{c['exam']} · {c['kategori']} ({c['n']})", dc.bapeten_xlsx(mod, c["df"], incl), file_name=dc.bapeten_filename(mod, c),
+                                                       key=f"one_{mod}_{i}", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    st.caption("Format: Excel (.xlsx) dengan header dan susunan kolom seperti template Target BAPETEN. Jika portal BAPETEN meminta .xls, buka file lalu Simpan sebagai Excel 97-2003.")
+        if mod in dc.BAPETEN_FORM:
+            with st.expander("Rekap internal: median (Q2) dan Q3 terhadap acuan (bukan untuk BAPETEN)"):
+                rk = dc.rekap(mod, sel, cfg, "Dewasa" if kat == "Semua kategori" else kat, dari, sampai, exams or None)
                 if rk.empty: st.caption("Tidak ada data valid untuk filter ini.")
                 else:
                     def _c(x): return ("background-color:#F8D0D0;color:#9C1C1C;font-weight:600" if str(x).startswith("Di atas") else
@@ -283,13 +312,6 @@ elif menu == MENU[2]:
                     fmt = {col: "{:.2f}" for col in rk.columns if col not in ("Jenis Pemeriksaan", "Jumlah Sampel", "Status")}
                     sty = rk.style.format(fmt, na_rep="-"); sty = (sty.map if hasattr(sty, "map") else sty.applymap)(_c, subset=["Status"])
                     st.dataframe(sty, use_container_width=True, hide_index=True)
-            per = "semua" if not (dari or sampai) else f"{dari or '...'} s/d {sampai or '...'}"
-            dout = data_out.drop(columns=["_rid"], errors="ignore")
-            xl = dc.to_excel(mod, dout, rekaps, cfg, dict(rs=RS, periode=per), include_name=incl)
-            fn = f"BAPETEN_Dosis_{mod}_{kat.replace(' ', '')}_{dt.date.today():%Y%m%d}.xlsx"
-            st.download_button("⬇️ Download Excel BAPETEN", xl, file_name=fn, type="primary", disabled=len(data_out) == 0,
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            if len(data_out) == 0: st.caption("Belum ada data valid. Isi dosis di menu 2 terlebih dahulu.")
 
 # =================================================== PARAMETER
 else:
@@ -311,7 +333,7 @@ else:
         step("🎯", "Daftar pemeriksaan & acuan nasional (TPD)", "Kosong = tidak dibandingkan. Nama baru dari import otomatis masuk di sini. Verifikasi dengan TPD BAPETEN terbaru.")
         for mod in dc.MODS:
             with st.expander(dc.MODS[mod]["label"]):
-                ks = ["INAK", "ESAK"] if mod == "GR" else ["CTDIvol", "DLP"] if mod == "CT" else ["AGD"] if mod == "MAMMO" else ["DAP", "Kerma total"] if mod in ("CATH", "FLURO") else ["DAP"]
+                ks = ["INAK", "ESAK"] if mod == "GR" else ["CTDIvol", "DLP"] if mod == "CT" else ["MGD"] if mod == "MAMMO" else ["DAP", "Kerma total"] if mod in ("CATH", "FLURO") else ["DAP"]
                 t = pd.DataFrame([{"Nama": n, **{k_: v.get(k_) for k_ in ks}} for n, v in cfg["tpd"].get(mod, {}).items()], columns=["Nama"] + ks)
                 e = st.data_editor(t, num_rows="dynamic", key=f"tpd_{mod}", use_container_width=True, hide_index=True)
                 cfg["tpd"][mod] = {r["Nama"]: {k_: float(r[k_]) for k_ in ks if not pd.isna(r[k_])} for _, r in e.iterrows() if isinstance(r["Nama"], str) and r["Nama"].strip()}
