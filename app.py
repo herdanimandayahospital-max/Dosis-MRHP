@@ -37,9 +37,14 @@ div[data-baseweb="tab-list"]{gap:4px;flex-wrap:wrap}
 button[data-baseweb="tab"]{border-radius:10px 10px 0 0;padding:8px 16px}
 [data-testid="stSidebar"]{background:linear-gradient(180deg,#073763 0%,#0b4a78 100%)}
 [data-testid="stSidebar"] *{color:#fff}
+[data-testid="stSidebarHeader"]{height:2.2rem;min-height:0;padding:.4rem .8rem 0}
+[data-testid="stSidebarUserContent"]{padding-top:0 !important}
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"]{gap:.3rem}
+.side-logo{text-align:center;margin:-6px 0 14px 0;padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,.18)}
+.side-logo img{width:185px;max-width:88%}
 [data-testid="stSidebar"] .stButton>button>div{width:100%;justify-content:flex-start !important;text-align:left !important}
 [data-testid="stSidebar"] .stButton>button p{text-align:left !important;width:100%}
-[data-testid="stSidebar"] .stButton>button{width:100%;justify-content:flex-start;text-align:left;background:transparent;border:1px solid transparent;color:#fff;border-radius:12px;min-height:3rem;padding:.5rem 1rem;font-size:.98rem}
+[data-testid="stSidebar"] .stButton>button{width:100%;justify-content:flex-start;text-align:left;background:transparent;border:1px solid transparent;color:#fff;border-radius:12px;min-height:2.7rem;padding:.35rem 1rem;font-size:.97rem}
 [data-testid="stSidebar"] .stButton>button:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.25);color:#fff}
 [data-testid="stSidebar"] .stButton>button[kind="primary"]{background:#fff;color:#073763;border-color:#fff}
 [data-testid="stSidebar"] .stButton>button[kind="primary"] p{color:#073763 !important;font-weight:700}
@@ -61,7 +66,7 @@ div[data-testid="stRadio"] div[role="radiogroup"]>label:has(input:checked) p{col
 .rb.ok{background:#d5eedd;color:#1e6b3a}.rb.bad{background:#f8d0d0;color:#9c1c1c}.rb.na{background:#eceff3;color:#5C7691}
 @media (max-width:768px){.drl-row{grid-template-columns:1fr}}
 .side-t{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#a9c7de !important;margin:14px 0 8px 2px}
-.side-card{background:rgba(255,255,255,.1);border-radius:12px;padding:10px 14px;margin-top:10px;font-size:.85rem;line-height:1.5}
+.side-card{background:rgba(255,255,255,.1);border-radius:12px;padding:12px 16px;margin-top:18px;font-size:.85rem;line-height:1.5}
 @media (max-width:768px){.block-container{padding:3rem .6rem 2rem !important}.hero{padding:14px 16px}.hero .t{font-size:1.2rem}.badge{margin-left:0}}
 </style>""", unsafe_allow_html=True)
 
@@ -146,7 +151,7 @@ if st.session_state.get("flash"): st.success(st.session_state.pop("flash"))
 
 MENU = ["Import Data", "Database Dosis Pasien", "Download BAPETEN", "Dashboard", "⚙️ Parameter"]
 with st.sidebar:
-    if logo: st.markdown(f'<div><img src="data:image/png;base64,{logo}" style="width:170px;margin:4px 0 6px 4px"></div>', unsafe_allow_html=True)
+    if logo: st.markdown(f'<div class="side-logo"><img src="data:image/png;base64,{logo}"></div>', unsafe_allow_html=True)
     if "menu" not in st.session_state: st.session_state["menu"] = MENU[0]
     for i, m_ in enumerate(MENU):
         if st.button(m_, key=f"nav{i}", type="primary" if st.session_state["menu"] == m_ else "secondary", use_container_width=True):
