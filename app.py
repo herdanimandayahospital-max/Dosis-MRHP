@@ -46,27 +46,42 @@ URL, KEY, PW = str(_sec("SUPABASE_URL")).rstrip("/"), _sec("SUPABASE_KEY"), _sec
 H = {"apikey": KEY, "Authorization": f"Bearer {KEY}", "Content-Type": "application/json", "Prefer": "return=minimal"}
 ONLINE = bool(URL and KEY)
 
-def sb_get(mod):
-    if not ONLINE: return pd.DataFrame()
-    rows, off = [], 0
-    while True:
-        r = requests.get(f"{URL}/rest/v1/dose_entries", headers={**H, "Range": f"{off}-{off+999}"},
-                         params={"modality": f"eq.{mod}", "select": "id,data", "order": "id"}, timeout=30)
-        r.raise_for_status(); b = r.json(); rows += b
-        if len(b) < 1000: break
-        off += 1000
-    return pd.DataFrame([{**x["data"], "_id": x["id"]} for x in rows])
-def sb_replace(mod, df):
-    clean = df.drop(columns=[c for c in df.columns if c.startswith("_")], errors="ignore")
-    recs = []
-    for r in clean.to_dict("records"):
-        r = {k: (None if (isinstance(v, float) and np.isnan(v)) or v is pd.NaT else (v.isoformat() if hasattr(v, "isoformat") else v)) for k, v in r.items()}
-        if any(v not in (None, "") for v in r.values()): recs.append({"modality": mod, "data": r})
+def _rec(r):
+    out = {}
+    for k, v in r.items():
+        if k in ("_rid", "Modalitas"): continue
+        if v is pd.NaT or (isinstance(v, float) and np.isnan(v)) or v is None: out[k] = None
+        elif isinstance(v, (pd.Timestamp, dt.datetime, dt.date)): out[k] = v.isoformat()
+        elif isinstance(v, (np.integer,)): out[k] = int(v)
+        elif isinstance(v, (np.floating,)): out[k] = float(v)
+        else: out[k] = v
+    return out
+def sb_get_all():
+    frames = []
     if ONLINE:
-        requests.delete(f"{URL}/rest/v1/dose_entries", headers=H, params={"modality": f"eq.{mod}"}, timeout=60).raise_for_status()
-        for i in range(0, len(recs), 500):
-            requests.post(f"{URL}/rest/v1/dose_entries", headers=H, data=json.dumps(recs[i:i+500]), timeout=60).raise_for_status()
-    return len(recs)
+        for mod in dc.MODS:
+            rows, off = [], 0
+            while True:
+                r = requests.get(f"{URL}/rest/v1/dose_entries", headers={**H, "Range": f"{off}-{off+999}"},
+                                 params={"modality": f"eq.{mod}", "select": "data", "order": "id"}, timeout=40)
+                r.raise_for_status(); b = r.json(); rows += [x["data"] for x in b]
+                if len(b) < 1000: break
+                off += 1000
+            if rows:
+                g = pd.DataFrame(rows); g["Modalitas"] = mod; frames.append(g)
+    m = pd.concat(frames, ignore_index=True) if frames else dc.empty_master()
+    for c in dc.empty_master().columns:
+        if c not in m.columns: m[c] = None
+    m["_rid"] = range(len(m)); m["Tanggal"] = pd.to_datetime(m["Tanggal"], errors="coerce")
+    return m
+def sb_post(mod, df):
+    recs = [{"modality": mod, "data": _rec(r)} for r in df.to_dict("records")]
+    for i in range(0, len(recs), 500):
+        requests.post(f"{URL}/rest/v1/dose_entries", headers=H, data=json.dumps(recs[i:i+500]), timeout=90).raise_for_status()
+def sb_replace(mod, df):
+    if not ONLINE: return len(df)
+    requests.delete(f"{URL}/rest/v1/dose_entries", headers=H, params={"modality": f"eq.{mod}"}, timeout=90).raise_for_status()
+    sb_post(mod, df); return len(df)
 def cfg_load():
     if not ONLINE: return dc.merge_cfg(None)
     try:
@@ -91,107 +106,173 @@ if PW and not st.session_state.get("dose_ok"):
         if st.button("Masuk", type="primary") and p == PW: st.session_state["dose_ok"] = True; st.rerun()
     st.stop()
 if not ONLINE:
-    st.info("**Mode lokal** — aplikasi tetap bisa dipakai (import, hitung, unduh), tetapi data hilang jika halaman ditutup. "
-            "Hubungkan Supabase di *Settings → Secrets* agar data tersimpan permanen.")
+    st.info("**Mode lokal** — semua fitur bisa dipakai, tetapi data hilang jika halaman ditutup. Hubungkan Supabase di *Settings → Secrets* agar tersimpan permanen.")
 
 if "cfg" not in st.session_state: st.session_state.cfg = cfg_load()
-cfg = st.session_state.cfg
-icons = {"GR": "🩻", "CT": "🌀", "CATH": "❤️", "DENTAL": "🦷"}
-tabs = st.tabs([f"{icons[m]} {dc.MODS[m]['label']}" for m in dc.MODS] + ["⚙️ Parameter & Acuan"])
+if "master" not in st.session_state:
+    try: st.session_state.master = sb_get_all()
+    except Exception as e: st.session_state.master = dc.empty_master(); st.warning(f"Gagal membaca database: {e}")
+cfg = st.session_state.cfg; master = st.session_state.master
+if st.session_state.get("flash"): st.success(st.session_state.pop("flash"))
 
-def template_xlsx(mod):
-    spec = dc.MODS[mod]; b = io.BytesIO()
-    pd.DataFrame(columns=spec["cols"]).to_excel(b, index=False); return b.getvalue()
+MENU = ["1 · Import Data", "2 · Database Dosis Pasien", "3 · Download BAPETEN", "⚙️ Parameter"]
+menu = st.radio("Menu", MENU, horizontal=True, label_visibility="collapsed", key="menu")
+icons = {"GR": "🩻", "CT": "🌀", "MAMMO": "🎀", "FLURO": "💧", "CATH": "❤️", "DENTAL": "🦷"}
+def modlabel(m): return f"{icons[m]} {dc.MODS[m]['label']}"
 
-for tab, mod in zip(tabs, dc.MODS):
-    with tab:
-        spec = dc.MODS[mod]; ex = spec["exam"]; key = f"df_{mod}"
-        if key not in st.session_state:
-            try: st.session_state[key] = sb_get(mod)
-            except Exception as e: st.session_state[key] = pd.DataFrame(); st.warning(f"Gagal membaca data: {e}")
-        ver = st.session_state.setdefault(f"ver_{mod}", 0)
-        if st.session_state.get(f"flash_{mod}"): st.success(st.session_state.pop(f"flash_{mod}"))
+def in_period(d, dari, sampai):
+    if "Tanggal" not in d.columns or not (dari or sampai): return d
+    t = pd.to_datetime(d["Tanggal"], errors="coerce"); ok = pd.Series(True, index=d.index)
+    if dari: ok &= t >= pd.Timestamp(dari)
+    if sampai: ok &= t < pd.Timestamp(sampai) + pd.Timedelta(days=1)
+    return d[ok]
 
-        # 1 import
+def computed(mod):
+    g = master[master["Modalitas"] == mod]
+    return dc.compute(mod, g[["_rid"] + dc.MODS[mod]["cols"]].reset_index(drop=True), cfg)
+
+# =================================================== MENU 1
+if menu == MENU[0]:
+    with st.container(border=True):
+        step(1, "Import data dari RIS", "Unggah file ekspor Daily Case by Modality (.xlsx / .csv). Baris judul dikenali otomatis.")
+        up = st.file_uploader("Pilih file RIS", type=["xlsx", "xls", "csv"], label_visibility="collapsed")
+        if up is not None:
+            try:
+                raw = dc.read_ris(up); new, skipped = dc.parse_ris(raw)
+                c = st.columns(3)
+                c[0].metric("Baris di file", f"{len(raw):,}"); c[1].metric("Berdosis (dipilah)", f"{len(new):,}"); c[2].metric("Diabaikan", f"{sum(skipped.values()):,}")
+                prev = new["Modalitas"].value_counts().rename_axis("Modalitas").reset_index(name="Jumlah")
+                prev["Modalitas"] = prev["Modalitas"].map(lambda m: dc.MODS[m]["label"])
+                c1, c2 = st.columns(2)
+                c1.markdown("**Akan masuk ke database**"); c1.dataframe(prev, hide_index=True, use_container_width=True)
+                c2.markdown("**Diabaikan (tidak memakai radiasi pengion / bukan dosis pasien)**")
+                c2.dataframe(pd.DataFrame(list(skipped.items()), columns=["Modalitas RIS", "Jumlah"]), hide_index=True, use_container_width=True)
+                if st.button("Proses & tambahkan ke database", type="primary"):
+                    with st.spinner("Memproses..."):
+                        master2, added = dc.add_rows(master, new)
+                        dc.register_exams(cfg, added)
+                        if ONLINE:
+                            for mod, g in added.groupby("Modalitas"): sb_post(mod, g)
+                            cfg_save(cfg)
+                    st.session_state.master = master2
+                    st.session_state["flash"] = f"{len(added):,} data baru ditambahkan, {len(new)-len(added):,} dilewati karena sudah ada. Lanjut ke menu 2 untuk mengisi dosis."
+                    st.rerun()
+            except Exception as e:
+                st.error(f"File tidak dapat dibaca: {e}")
+    with st.container(border=True):
+        st.markdown("**Isi database saat ini**")
+        if len(master) == 0: st.caption("Database masih kosong.")
+        else:
+            cnt = master["Modalitas"].value_counts()
+            cols = st.columns(len(cnt))
+            for col, (m, n) in zip(cols, cnt.items()): col.metric(modlabel(m), f"{n:,}")
+    st.caption("Pemilahan otomatis: GENERAL X-RAY → Radiografi Umum (Panoramic/CBCT/Cephalo → Dental), CT SCAN → CT, MAMMOGRAPHY → Mamografi, FLUOROSCOPY → Fluoroskopi. "
+               "Nama pemeriksaan disamakan ke nama baku (mis. Thorax AP/PA → CHEST). Data ganda (RN + Visit + Pemeriksaan + Tanggal sama) dilewati.")
+
+# =================================================== MENU 2
+elif menu == MENU[1]:
+    present = [m for m in dc.MODS if (master["Modalitas"] == m).any()] or list(dc.MODS)
+    mod = st.radio("Modalitas", present, horizontal=True, format_func=modlabel, key="m2mod")
+    spec = dc.MODS[mod]; ex = spec["exam"]
+    d_all = computed(mod)
+    okn = int((d_all["Cek"] == "OK").sum()); filled = int(d_all[spec["dose"]].notna().any(axis=1).sum()) if len(d_all) else 0
+    with st.container(border=True):
+        step(2, f"Database dosis pasien · {dc.MODS[mod]['label']}", "Isi protokol & dosis pada kolom putih. Kolom abu-abu dihitung otomatis.")
+        k = st.columns(4); k[0].metric("Total pasien", f"{len(d_all):,}"); k[1].metric("Dosis terisi", f"{filled:,}"); k[2].metric("Valid (siap lapor)", f"{okn:,}")
+        k[3].metric("Dewasa / Anak / Bayi", " / ".join(str(int((d_all['Kategori usia'] == x).sum())) for x in ("Dewasa", "Anak", "Bayi")))
+        f1, f2, f3, f4 = st.columns([2, 1, 1, 1])
+        exams = f1.multiselect("Jenis pemeriksaan", sorted(d_all[ex].dropna().unique()), key=f"fx_{mod}", placeholder="Semua")
+        kat = f2.selectbox("Kategori usia", ["Semua", "Dewasa", "Anak", "Bayi"], key=f"fk_{mod}")
+        stt = f3.selectbox("Status", ["Semua", "Belum diisi", "Sudah diisi", "Bermasalah"], key=f"fs_{mod}")
+        cari = f4.text_input("Cari nama / RN", key=f"fc_{mod}")
+        g1, g2 = st.columns(2)
+        dari = g1.date_input("Dari tanggal", value=None, key=f"fd1_{mod}", format="DD/MM/YYYY"); sampai = g2.date_input("Sampai tanggal", value=None, key=f"fd2_{mod}", format="DD/MM/YYYY")
+        v = d_all
+        if exams: v = v[v[ex].isin(exams)]
+        if kat != "Semua": v = v[v["Kategori usia"] == kat]
+        has = v[spec["dose"]].notna().any(axis=1)
+        if stt == "Belum diisi": v = v[~has]
+        elif stt == "Sudah diisi": v = v[has]
+        elif stt == "Bermasalah": v = v[v["Cek"] != "OK"]
+        v = in_period(v, dari, sampai)
+        if cari:
+            q = cari.lower(); v = v[v["Nama"].astype(str).str.lower().str.contains(q, regex=False) | v["Kode Pasien"].astype(str).str.lower().str.contains(q, regex=False)]
+        PS = 200; pages = max(1, -(-len(v) // PS))
+        p1, p2 = st.columns([1, 3]); pg = p1.number_input("Halaman", 1, pages, 1, key=f"pg_{mod}")
+        p2.caption(f"{len(v):,} baris sesuai filter · halaman {pg} dari {pages} · {PS} baris per halaman")
+        page = v.iloc[(pg - 1) * PS: pg * PS]
+        derived = [c for c in d_all.columns if c not in spec["cols"] + ["_rid"]]
+        gray = ["Kode Pasien", "Nama", "Deskripsi RIS", "Visit No"] + derived
+        sig = hash((tuple(exams), kat, stt, cari, str(dari), str(sampai), pg, len(master), st.session_state.get(f"ver_{mod}", 0)))
+        show = page[["_rid"] + spec["cols"] + derived].copy()
+        cc = {"_rid": None, "Visit No": None}
+        cc["Gender"] = st.column_config.SelectboxColumn("Gender", options=["M", "F"], width="small")
+        cc[ex] = st.column_config.SelectboxColumn(ex, options=sorted(set(cfg["tpd"].get(mod, {})) | set(d_all[ex].dropna())), width="medium")
+        cc["Tanggal"] = st.column_config.DateColumn("Tanggal", format="DD/MM/YYYY")
+        cc["Umur"] = st.column_config.NumberColumn("Umur", width="small")
+        edited = st.data_editor(show, num_rows="dynamic", column_config=cc, disabled=gray, use_container_width=True, hide_index=True, height=420, key=f"ed_{mod}_{sig}")
+        b1, b2 = st.columns([1, 3])
+        if b1.button("💾 Simpan perubahan" if ONLINE else "💾 Simpan (sesi ini)", type="primary", key=f"sv_{mod}"):
+            try:
+                keep_cols = ["_rid"] + spec["cols"]
+                m2 = dc.apply_edits(master, page["_rid"].astype(int).tolist(), edited[keep_cols], mod)
+                n = sb_replace(mod, m2[m2["Modalitas"] == mod])
+                st.session_state.master = m2; st.session_state[f"ver_{mod}"] = st.session_state.get(f"ver_{mod}", 0) + 1
+                st.session_state["flash"] = f"Tersimpan. {n:,} data {dc.MODS[mod]['label']} di database."; st.rerun()
+            except Exception as e: st.error(f"Gagal menyimpan: {e}")
+        b2.caption("Tips: filter *Belum diisi* + satu jenis pemeriksaan agar pengisian dosis lebih cepat. Perubahan baru tersimpan setelah menekan tombol Simpan.")
+
+# =================================================== MENU 3
+elif menu == MENU[2]:
+    present = [m for m in dc.MODS if (master["Modalitas"] == m).any()]
+    if not present:
+        st.info("Database masih kosong. Mulai dari menu 1 · Import Data.")
+    else:
         with st.container(border=True):
-            step(1, "Import data pasien", "Ekspor Google Form (.xlsx / .csv). Kolom dikenali otomatis.")
-            c1, c2 = st.columns([3, 1])
-            up = c1.file_uploader("Pilih file", type=["xlsx", "xls", "csv"], key=f"up_{mod}", label_visibility="collapsed")
-            c2.download_button("Unduh template kolom", template_xlsx(mod), file_name=f"Template_{mod}.xlsx", key=f"tpl_{mod}", use_container_width=True)
-            if up is not None and st.button("Tambahkan ke tabel", key=f"imp_{mod}", type="primary"):
-                raw = pd.read_csv(up) if up.name.lower().endswith(".csv") else pd.read_excel(up)
-                new, used = dc.map_columns(mod, raw)
-                cur = st.session_state.get(f"cur_{mod}", st.session_state[key])
-                st.session_state[key] = pd.concat([cur, new], ignore_index=True)
-                st.session_state[f"ver_{mod}"] += 1
-                st.session_state[f"flash_{mod}"] = f"{len(new)} baris berhasil diimpor. Kolom terbaca: " + ", ".join(used) + ". Lengkapi protokol & dosis di langkah 2."
-                st.rerun()
-
-        # 2 isi
-        with st.container(border=True):
-            step(2, "Isi protokol & dosis", "Klik sel untuk mengisi. Tambah baris baru di bagian bawah tabel.")
-            base = st.session_state[key].copy()
-            for c in spec["cols"]:
-                if c not in base.columns: base[c] = None
-            for c in ("Gender", "Kode Pasien", ex): base[c] = base[c].astype("object")
-            show = base[spec["cols"] + [c for c in base.columns if c.startswith("_")]]
-            cc = {ex: st.column_config.SelectboxColumn(ex, options=list(cfg["tpd"][mod]), width="medium"),
-                  "Gender": st.column_config.SelectboxColumn("Gender", options=["M", "F"], width="small"), "_id": None}
-            if "Tanggal" in show.columns:
-                show["Tanggal"] = pd.to_datetime(show["Tanggal"], errors="coerce"); cc["Tanggal"] = st.column_config.DateColumn("Tanggal", format="DD/MM/YYYY")
-            edited = st.data_editor(show, num_rows="dynamic", column_config=cc, use_container_width=True, key=f"ed_{mod}_{ver}", height=340)
-            st.session_state[f"cur_{mod}"] = edited
-
-        # 3 hitung
-        d = dc.compute(mod, edited.drop(columns=["_id"], errors="ignore"), cfg)
-        okn = int((d["Cek"] == "OK").sum()); bad = len(d) - okn
-        with st.container(border=True):
-            step(3, "Hasil hitung & simpan", "Dosis turunan dihitung otomatis. Baris bermasalah ditandai di kolom Cek.")
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Total baris", len(d)); m2.metric("Valid", okn); m3.metric("Perlu dilengkapi", bad)
-            m4.metric("Dewasa / Anak / Bayi", " / ".join(str(int((d["Kategori usia"] == k).sum())) for k in ("Dewasa", "Anak", "Bayi")))
-            only_bad = st.toggle("Tampilkan hanya baris bermasalah", key=f"bad_{mod}", value=False)
-            derived = [c for c in d.columns if c not in spec["cols"]]
-            view = d[["Kode Pasien", ex] + derived]
-            if only_bad: view = view[d["Cek"] != "OK"]
-            st.dataframe(view, use_container_width=True, height=240, hide_index=True)
-            if st.button("💾 Simpan data" if ONLINE else "💾 Simpan sementara (sesi ini)", key=f"sv_{mod}", type="primary"):
-                try:
-                    n = sb_replace(mod, edited); st.session_state[key] = edited; st.session_state[f"ver_{mod}"] += 1
-                    st.session_state[f"flash_{mod}"] = f"{n} baris tersimpan." if ONLINE else f"{n} baris disimpan di sesi ini (mode lokal)."; st.rerun()
-                except Exception as e: st.error(f"Gagal menyimpan: {e}")
-
-        # 4 unduh
-        with st.container(border=True):
-            step(4, "Rekap & unduh format BAPETEN", "Median (Q2) dan Q3 per jenis pemeriksaan; acuan nasional hanya untuk Dewasa.")
-            f1, f2, f3 = st.columns(3)
-            kat = f1.selectbox("Kategori usia", ["Dewasa", "Anak", "Bayi", "Semua"], key=f"k_{mod}")
-            dari = f2.date_input("Dari tanggal", value=None, key=f"d1_{mod}", format="DD/MM/YYYY")
-            sampai = f3.date_input("Sampai tanggal", value=None, key=f"d2_{mod}", format="DD/MM/YYYY")
-            rk = dc.rekap(mod, d[d["Cek"] == "OK"], cfg, kat, dari, sampai)
-            if rk.empty: st.caption("Belum ada data valid untuk filter ini.")
-            else:
-                def _c(v):
-                    return ("background-color:#F8D0D0;color:#9C1C1C;font-weight:600" if str(v).startswith("Di atas") else
-                            "background-color:#D5EEDD;color:#1E6B3A;font-weight:600" if str(v).startswith("Sesuai") else "")
-                fmt = {c: "{:.2f}" for c in rk.columns if c not in ("Jenis Pemeriksaan", "Jumlah Sampel", "Status")}
-                sty = rk.style.format(fmt, na_rep="-"); sty = (sty.map if hasattr(sty, "map") else sty.applymap)(_c, subset=["Status"])
-                st.dataframe(sty, use_container_width=True, hide_index=True)
+            step(3, "Download format BAPETEN", "Pilih modalitas, jenis pemeriksaan, dan kategori usia. Hanya data valid (dosis lengkap) yang masuk.")
+            mod = st.radio("Modalitas", present, horizontal=True, format_func=modlabel, key="m3mod")
+            spec = dc.MODS[mod]; ex = spec["exam"]
+            d = computed(mod); dv = d[d["Cek"] == "OK"]
+            c1, c2 = st.columns([2, 1])
+            exams = c1.multiselect("Jenis pemeriksaan", sorted(dv[ex].dropna().unique()), key=f"x3_{mod}", placeholder="Semua jenis pemeriksaan")
+            kat = c2.selectbox("Kategori usia", ["Dewasa", "Anak", "Bayi", "Semua kategori"], key=f"k3_{mod}")
+            g1, g2, g3 = st.columns([1, 1, 1])
+            dari = g1.date_input("Dari tanggal", value=None, key=f"d13_{mod}", format="DD/MM/YYYY"); sampai = g2.date_input("Sampai tanggal", value=None, key=f"d23_{mod}", format="DD/MM/YYYY")
+            incl = g3.checkbox("Sertakan nama pasien", value=False, help="Nama tidak diperlukan untuk laporan; hanya Kode Pasien (RN).")
+            sel = dv[dv[ex].isin(exams)] if exams else dv
+            sel = in_period(sel, dari, sampai)
+            cats = ["Dewasa", "Anak", "Bayi"] if kat == "Semua kategori" else [kat]
+            data_out = sel if kat == "Semua kategori" else sel[sel["Kategori usia"] == kat]
+            rekaps = {c: dc.rekap(mod, sel, cfg, c, dari, sampai, exams or None) for c in cats}
+            m = st.columns(3); m[0].metric("Data valid terpilih", f"{len(data_out):,}"); m[1].metric("Tidak valid (dikecualikan)", f"{int((d['Cek'] != 'OK').sum()):,}")
+            m[2].metric("Jenis pemeriksaan", int(data_out[ex].nunique()))
+            for c, rk in rekaps.items():
+                if len(cats) > 1: st.markdown(f"**{c}**")
+                if rk.empty: st.caption("Tidak ada data valid untuk filter ini.")
+                else:
+                    def _c(x): return ("background-color:#F8D0D0;color:#9C1C1C;font-weight:600" if str(x).startswith("Di atas") else
+                                      "background-color:#D5EEDD;color:#1E6B3A;font-weight:600" if str(x).startswith("Sesuai") else "")
+                    fmt = {col: "{:.2f}" for col in rk.columns if col not in ("Jenis Pemeriksaan", "Jumlah Sampel", "Status")}
+                    sty = rk.style.format(fmt, na_rep="-"); sty = (sty.map if hasattr(sty, "map") else sty.applymap)(_c, subset=["Status"])
+                    st.dataframe(sty, use_container_width=True, hide_index=True)
             per = "semua" if not (dari or sampai) else f"{dari or '...'} s/d {sampai or '...'}"
-            xl = dc.to_excel(mod, d, rk, cfg, dict(rs=RS, kategori=kat, periode=per))
-            st.download_button("⬇️ Unduh Excel (Rekap + Data)", xl, file_name=f"Dosis_{mod}_{kat}_{dt.date.today():%Y%m%d}.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"dl_{mod}", type="primary")
+            dout = data_out.drop(columns=["_rid"], errors="ignore")
+            xl = dc.to_excel(mod, dout, rekaps, cfg, dict(rs=RS, periode=per), include_name=incl)
+            fn = f"BAPETEN_Dosis_{mod}_{kat.replace(' ', '')}_{dt.date.today():%Y%m%d}.xlsx"
+            st.download_button("⬇️ Download Excel BAPETEN", xl, file_name=fn, type="primary", disabled=len(data_out) == 0,
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            if len(data_out) == 0: st.caption("Belum ada data valid. Isi dosis di menu 2 terlebih dahulu.")
 
-with tabs[-1]:
+# =================================================== PARAMETER
+else:
     with st.container(border=True):
         step("⚙", "Parameter umum", "Dipakai untuk kategori usia dan perhitungan INAK/ESAK.")
         c1, c2, c3 = st.columns(3)
         cfg["bayi_max"] = c1.number_input("Bayi: usia maks (th)", value=int(cfg["bayi_max"]))
         cfg["dewasa_min"] = c2.number_input("Dewasa: usia min (th)", value=int(cfg["dewasa_min"]))
         cfg["bsf"] = c3.number_input("BSF", value=float(cfg["bsf"]), step=0.01)
-        u1, u2 = st.columns(2)
-        un = ["mGy.cm2", "Gy.cm2"]
-        cfg["unit_dap_cath"] = u1.selectbox("Satuan DAP input Cathlab", un, index=un.index(cfg["unit_dap_cath"]))
+        u1, u2 = st.columns(2); un = ["mGy.cm2", "Gy.cm2"]
+        cfg["unit_dap_cath"] = u1.selectbox("Satuan DAP input Cathlab / Fluoroskopi", un, index=un.index(cfg["unit_dap_cath"]))
         cfg["unit_dap_dental"] = u2.selectbox("Satuan DAP input Dental", un, index=un.index(cfg["unit_dap_dental"]))
     with st.container(border=True):
         step("⚡", "Output tabung (kV vs µGy/mAs)", "Dari hasil uji; dipakai menghitung INAK. Minimal 3 titik.")
@@ -199,13 +280,13 @@ with tabs[-1]:
         cfg["out_pts"] = o.dropna().values.tolist(); co = dc.fit_output(cfg["out_pts"])
         st.caption(("Kurva: y = %.5f·kV² + %.4f·kV + %.3f" % tuple(co)) if co else "Isi minimal 3 titik.")
     with st.container(border=True):
-        step("🎯", "Daftar pemeriksaan & acuan nasional (TPD)", "Kosong = tidak dibandingkan. Verifikasi dengan TPD BAPETEN terbaru.")
+        step("🎯", "Daftar pemeriksaan & acuan nasional (TPD)", "Kosong = tidak dibandingkan. Nama baru dari import otomatis masuk di sini. Verifikasi dengan TPD BAPETEN terbaru.")
         for mod in dc.MODS:
             with st.expander(dc.MODS[mod]["label"]):
-                ks = ["INAK", "ESAK"] if mod == "GR" else ["CTDIvol", "DLP"] if mod == "CT" else ["DAP", "Kerma total"] if mod == "CATH" else ["DAP"]
-                t = pd.DataFrame([{"Nama": n, **{k: v.get(k) for k in ks}} for n, v in cfg["tpd"][mod].items()], columns=["Nama"] + ks)
+                ks = ["INAK", "ESAK"] if mod == "GR" else ["CTDIvol", "DLP"] if mod == "CT" else ["AGD"] if mod == "MAMMO" else ["DAP", "Kerma total"] if mod in ("CATH", "FLURO") else ["DAP"]
+                t = pd.DataFrame([{"Nama": n, **{k_: v.get(k_) for k_ in ks}} for n, v in cfg["tpd"].get(mod, {}).items()], columns=["Nama"] + ks)
                 e = st.data_editor(t, num_rows="dynamic", key=f"tpd_{mod}", use_container_width=True, hide_index=True)
-                cfg["tpd"][mod] = {r["Nama"]: {k: float(r[k]) for k in ks if not pd.isna(r[k])} for _, r in e.iterrows() if isinstance(r["Nama"], str) and r["Nama"].strip()}
+                cfg["tpd"][mod] = {r["Nama"]: {k_: float(r[k_]) for k_ in ks if not pd.isna(r[k_])} for _, r in e.iterrows() if isinstance(r["Nama"], str) and r["Nama"].strip()}
     if st.button("💾 Simpan parameter", type="primary"):
         try: cfg_save(cfg); st.success("Parameter tersimpan." if ONLINE else "Parameter dipakai selama sesi ini (mode lokal).")
         except Exception as e: st.error(f"Gagal: {e}")
