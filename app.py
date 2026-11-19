@@ -361,8 +361,10 @@ elif menu == MENU[3]:
                 st.markdown(f"**{lab}** · urut dari rasio tertinggi terhadap nasional")
                 q = rk.copy(); acc = f"{lab} Acuan"
                 if acc in q.columns: q["_r"] = pd.to_numeric(q[f"{lab} Median (Q2)"], errors="coerce") / pd.to_numeric(q[acc], errors="coerce"); q = q.sort_values("_r", ascending=False, na_position="last")
-                st.markdown(dc.drl_html(q, lab), unsafe_allow_html=True)
-                st.caption("Typical value = median (Quartil 2) dosis lokal. Batang biru tua = lokal, biru muda = DRL nasional. Persentase > 100% berarti typical value lokal melebihi DRL nasional. n < 10 berarti sampel belum cukup untuk dijadikan typical value.")
+                st.markdown(dc.drl_svg(q, lab), unsafe_allow_html=True)
+                with st.expander("Rincian rasio per pemeriksaan"):
+                    st.markdown(dc.drl_html(q, lab), unsafe_allow_html=True)
+                st.caption("Typical value = median (Quartil 2) dosis lokal. Batang biru tua = lokal, merah = lokal melebihi nasional, biru muda = DRL nasional. Persentase > 100% berarti typical value lokal melebihi DRL nasional. n < 10 berarti sampel belum cukup untuk dijadikan typical value.")
             with st.expander("Tabel lengkap (Q2, Q3, nasional)"):
                 fmt = {c_: "{:.2f}" for c_ in rk.columns if c_ not in ("Jenis Pemeriksaan", "Jumlah Sampel", "Status")}
                 st.dataframe(rk.style.format(fmt, na_rep="-"), use_container_width=True, hide_index=True)
