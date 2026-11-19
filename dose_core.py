@@ -376,3 +376,28 @@ def bapeten_zip(mod, combos, include_name=False):
     return bio.getvalue()
 
 def bapeten_filename(mod, c): return f"BAPETEN_{BAPETEN_FORM[mod]}_{_slug(c['exam'])}_{c['kategori']}.xlsx"
+
+
+# ====================== DASHBOARD DRL ======================
+def _fv(v):
+    v = float(v); return f"{v:,.0f}" if abs(v) >= 100 else (f"{v:.1f}" if abs(v) >= 10 else f"{v:.2f}")
+
+def drl_html(rk, lab):
+    """Bar HTML: DRL lokal (typical value = median Q2) vs DRL nasional per jenis pemeriksaan."""
+    q2c, acc, nc = f"{lab} Median (Q2)", f"{lab} Acuan", "Jumlah Sampel"
+    if rk is None or rk.empty or q2c not in rk.columns: return ""
+    vals = [v for v in rk[q2c].tolist() + (rk[acc].tolist() if acc in rk.columns else []) if v is not None and not pd.isna(v)]
+    mx = max(vals) if vals else 1.0
+    out = ['<div class="drl"><div class="drl-leg"><span><i style="background:#073763"></i>DRL lokal (typical value = Q2)</span><span><i style="background:#9ccbe0"></i>DRL nasional</span></div>']
+    for _, r in rk.iterrows():
+        q2 = r[q2c]; ref = r[acc] if acc in rk.columns else None
+        has_ref = ref is not None and not pd.isna(ref) and float(ref) > 0
+        ratio = (q2 / float(ref) * 100) if (has_ref and not pd.isna(q2)) else None
+        badge = ('<span class="rb na">acuan belum diisi</span>' if ratio is None else
+                 f'<span class="rb {"bad" if ratio > 100 else "ok"}">{ratio:.0f}% dari nasional</span>')
+        n = int(r[nc]); small = f' <span class="rn">n={n}</span>' + (' <span class="rn warn">n&lt;10</span>' if n < 10 else "")
+        w1 = 0 if pd.isna(q2) else max(1.5, float(q2) / mx * 100)
+        bars = f'<div class="bar"><div class="trk"><div class="b1" style="width:{w1:.1f}%"></div></div><span>{_fv(q2) if not pd.isna(q2) else "-"}</span></div>'
+        if has_ref: bars += f'<div class="bar"><div class="trk"><div class="b2" style="width:{max(1.5, float(ref)/mx*100):.1f}%"></div></div><span>{_fv(ref)}</span></div>'
+        out.append(f'<div class="drl-row"><div class="drl-n">{str(r["Jenis Pemeriksaan"])}{small}</div><div class="drl-b">{bars}</div><div class="drl-r">{badge}</div></div>')
+    out.append("</div>"); return "".join(out)
