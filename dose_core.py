@@ -2,7 +2,7 @@
 import io, numpy as np, pandas as pd
 
 ID_COLS = ["Kode Pasien","Nama","Gender","Umur","Berat Badan","Tanggal","Jenis Periksa","Deskripsi RIS","Visit No"]
-_D = {"GR": ["Posisi","Proyeksi","FDD","kV","mA","s","mAs"], "CTa": ["No of Phase","CTDIvol","DLP"],
+_D = {"GR": ["Posisi","Proyeksi","FDD","kV","mA","s","mAs"], "CT": ["No of Phase","CTDIvol","DLP"],
       "MAMMO": ["Proyeksi","Grid","AEC","kV","mA","s","mAs","Sudut DBT","Tebal kompresi","DAP","ESAK","MGD"],
       "FLURO": ["Fluoro detik","Laju frame","Jumlah frame","DAP","Laju kerma udara","Kerma total","Akses"],
       "CATH": ["Fluoro detik","Laju frame","Jumlah frame","DAP","Laju kerma udara","Kerma total","Akses"], "DENTAL": ["kV","mAs","FSD","DAP"]}

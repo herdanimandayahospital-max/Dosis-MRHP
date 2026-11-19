@@ -395,4 +395,3 @@ else:
     if st.button("💾 Simpan parameter", type="primary"):
         try: cfg_save(cfg); st.success("Parameter tersimpan." if ONLINE else "Parameter dipakai selama sesi ini (mode lokal).")
         except Exception as e: st.error(f"Gagal: {e}")
-            
