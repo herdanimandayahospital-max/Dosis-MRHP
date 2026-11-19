@@ -16,6 +16,8 @@ def _b64(p):
     except Exception: return ""
 
 st.markdown("""<style>
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap');
+html,body,.stApp,.stApp :where(p,span,div,label,button,input,textarea,select,h1,h2,h3,h4,h5,h6,li,a,td,th,small,b,strong):not([data-testid="stIconMaterial"]):not(.material-icons){font-family:'Lexend',sans-serif !important}
 :root{--navy:#073763;--teal:#1B7895;--soft:#F2F5F9;--line:#DCE5EE}
 .block-container{padding-top:3.2rem !important;padding-bottom:3rem;max-width:1280px}
 .hero{background:linear-gradient(120deg,#073763 0%,#0d5a86 60%,#1B7895 100%);border-radius:18px;padding:22px 26px;margin:0 0 16px 0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center}
@@ -35,6 +37,8 @@ div[data-baseweb="tab-list"]{gap:4px;flex-wrap:wrap}
 button[data-baseweb="tab"]{border-radius:10px 10px 0 0;padding:8px 16px}
 [data-testid="stSidebar"]{background:linear-gradient(180deg,#073763 0%,#0b4a78 100%)}
 [data-testid="stSidebar"] *{color:#fff}
+[data-testid="stSidebar"] .stButton>button>div{width:100%;justify-content:flex-start !important;text-align:left !important}
+[data-testid="stSidebar"] .stButton>button p{text-align:left !important;width:100%}
 [data-testid="stSidebar"] .stButton>button{width:100%;justify-content:flex-start;text-align:left;background:transparent;border:1px solid transparent;color:#fff;border-radius:12px;min-height:3rem;padding:.5rem 1rem;font-size:.98rem}
 [data-testid="stSidebar"] .stButton>button:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.25);color:#fff}
 [data-testid="stSidebar"] .stButton>button[kind="primary"]{background:#fff;color:#073763;border-color:#fff}
@@ -131,7 +135,7 @@ if st.session_state.get("flash"): st.success(st.session_state.pop("flash"))
 
 MENU = ["1 · Import Data", "2 · Database Dosis Pasien", "3 · Download BAPETEN", "⚙️ Parameter"]
 with st.sidebar:
-    if logo: st.markdown(f'<div style="text-align:center"><img src="data:image/png;base64,{logo}" style="width:170px;margin:4px 0 6px 0"></div>', unsafe_allow_html=True)
+    if logo: st.markdown(f'<div><img src="data:image/png;base64,{logo}" style="width:170px;margin:4px 0 6px 4px"></div>', unsafe_allow_html=True)
     st.markdown('<div class="side-t">Alur kerja</div>', unsafe_allow_html=True)
     if "menu" not in st.session_state: st.session_state["menu"] = MENU[0]
     for i, m_ in enumerate(MENU):
