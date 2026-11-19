@@ -401,3 +401,49 @@ def drl_html(rk, lab):
         if has_ref: bars += f'<div class="bar"><div class="trk"><div class="b2" style="width:{max(1.5, float(ref)/mx*100):.1f}%"></div></div><span>{_fv(ref)}</span></div>'
         out.append(f'<div class="drl-row"><div class="drl-n">{str(r["Jenis Pemeriksaan"])}{small}</div><div class="drl-b">{bars}</div><div class="drl-r">{badge}</div></div>')
     out.append("</div>"); return "".join(out)
+
+
+def _nice_max(v):
+    if v <= 0: return 1.0
+    e = 10 ** np.floor(np.log10(v)); f = v / e
+    return float((1 if f <= 1 else 2 if f <= 2 else 2.5 if f <= 2.5 else 5 if f <= 5 else 10) * e)
+
+def drl_svg(rk, lab):
+    """Grafik batang vertikal berkelompok: Q2 lokal vs DRL nasional per jenis pemeriksaan (SVG)."""
+    import textwrap, html as _h
+    q2c, acc = f"{lab} Median (Q2)", f"{lab} Acuan"
+    if rk is None or rk.empty or q2c not in rk.columns: return ""
+    r = rk.reset_index(drop=True); n = len(r)
+    q = pd.to_numeric(r[q2c], errors="coerce"); a = pd.to_numeric(r[acc], errors="coerce") if acc in r.columns else pd.Series([np.nan] * n)
+    top = _nice_max(float(max(q.max(skipna=True) if q.notna().any() else 0, a.max(skipna=True) if a.notna().any() else 0)) * 1.08)
+    gw, bw = 96, 26; ml, mr, mt, mb = 52, 16, 22, 78
+    W = ml + mr + gw * n; H = 360; ph = H - mt - mb
+    y = lambda v: mt + ph - (v / top) * ph
+    s = [f'<svg viewBox="0 0 {W} {H}" width="{W}" height="{H}" xmlns="http://www.w3.org/2000/svg" font-family="Lexend,sans-serif" role="img" aria-label="Grafik {_h.escape(lab)}">']
+    for i in range(6):
+        v = top * i / 5; yy = y(v)
+        s.append(f'<line x1="{ml}" x2="{W-mr}" y1="{yy:.1f}" y2="{yy:.1f}" stroke="#E3EBF3"/><text x="{ml-8}" y="{yy+4:.1f}" text-anchor="end" font-size="11" fill="#5C7691">{v:g}</text>')
+    s.append(f'<line x1="{ml}" x2="{W-mr}" y1="{y(0):.1f}" y2="{y(0):.1f}" stroke="#9fb3c8"/>')
+    for i in range(n):
+        cx = ml + gw * i + gw / 2; name = str(r.loc[i, "Jenis Pemeriksaan"]); nn = int(r.loc[i, "Jumlah Sampel"])
+        has = not pd.isna(a[i]); v1 = q[i]
+        over = has and not pd.isna(v1) and v1 > a[i]
+        x1 = cx - bw - 2 if has else cx - bw / 2
+        if not pd.isna(v1):
+            col = "#c0392b" if over else "#073763"
+            s.append(f'<rect x="{x1:.1f}" y="{y(v1):.1f}" width="{bw}" height="{max(1, y(0)-y(v1)):.1f}" rx="3" fill="{col}"><title>{_h.escape(name)} - lokal Q2: {_fv(v1)} (n={nn})</title></rect>'
+                     f'<text x="{x1+bw/2:.1f}" y="{y(v1)-5:.1f}" text-anchor="middle" font-size="11" font-weight="600" fill="{col}">{_fv(v1)}</text>')
+        if has:
+            x2 = cx + 2
+            s.append(f'<rect x="{x2:.1f}" y="{y(a[i]):.1f}" width="{bw}" height="{max(1, y(0)-y(a[i])):.1f}" rx="3" fill="#9ccbe0"><title>{_h.escape(name)} - nasional: {_fv(a[i])}</title></rect>'
+                     f'<text x="{x2+bw/2:.1f}" y="{y(a[i])-5:.1f}" text-anchor="middle" font-size="11" font-weight="600" fill="#2b6f8e">{_fv(a[i])}</text>')
+        short = name.replace("CT SCAN ", "")
+        lines = textwrap.wrap(short, 15)[:3]
+        if len(textwrap.wrap(short, 15)) > 3: lines[-1] = lines[-1][:12] + "…"
+        for k, ln in enumerate(lines):
+            s.append(f'<text x="{cx:.1f}" y="{y(0)+16+k*13:.1f}" text-anchor="middle" font-size="11" fill="#073763">{_h.escape(ln)}</text>')
+        s.append(f'<text x="{cx:.1f}" y="{y(0)+16+len(lines)*13:.1f}" text-anchor="middle" font-size="10" fill="{"#8a5a00" if nn < 10 else "#7b8da1"}">n={nn}{" (&lt;10)" if nn < 10 else ""}</text>')
+    s.append("</svg>")
+    leg = ('<div class="drl-leg"><span><i style="background:#073763"></i>DRL lokal (Q2 / typical value)</span><span><i style="background:#c0392b"></i>Lokal melebihi nasional</span>'
+           '<span><i style="background:#9ccbe0"></i>DRL nasional</span></div>')
+    return f'{leg}<div style="overflow-x:auto;padding-bottom:6px">{"".join(s)}</div>'
