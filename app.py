@@ -9,7 +9,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 def _f(name): return os.path.join(HERE, name)
 LOGO, LOGO_W = _f("Mandaya Logo.png"), _f("Mandaya Logo White.png")
 RS = "Mandaya Royal Hospital Puri"
-st.set_page_config(page_title="Dose Monitoring - MRHP", page_icon=LOGO if os.path.exists(LOGO) else None, layout="wide")
+st.set_page_config(page_title="Dose Monitoring - MRHP", page_icon=LOGO if os.path.exists(LOGO) else None, layout="wide", initial_sidebar_state="expanded")
 
 def _b64(p):
     try: return base64.b64encode(open(p, "rb").read()).decode()
@@ -33,6 +33,18 @@ st.markdown("""<style>
 .stButton>button,.stDownloadButton>button{border-radius:10px;min-height:2.7rem;font-weight:600}
 div[data-baseweb="tab-list"]{gap:4px;flex-wrap:wrap}
 button[data-baseweb="tab"]{border-radius:10px 10px 0 0;padding:8px 16px}
+[data-testid="stSidebar"]{background:linear-gradient(180deg,#073763 0%,#0b4a78 100%)}
+[data-testid="stSidebar"] *{color:#fff}
+[data-testid="stSidebar"] [data-testid="stRadio"] label p{font-size:.98rem;font-weight:600}
+[data-testid="stSidebar"] div[role="radiogroup"]{gap:0;border-left:3px solid rgba(255,255,255,.25);margin-left:10px;padding-left:0}
+[data-testid="stSidebar"] div[role="radiogroup"]>label{padding:12px 14px 12px 16px;margin:0;border-radius:0 12px 12px 0;cursor:pointer;position:relative;width:100%}
+[data-testid="stSidebar"] div[role="radiogroup"]>label>div:first-child{display:none}
+[data-testid="stSidebar"] div[role="radiogroup"]>label::before{content:"";position:absolute;left:-10px;top:50%;width:17px;height:17px;margin-top:-8px;border-radius:50%;background:#0b4a78;border:3px solid rgba(255,255,255,.45)}
+[data-testid="stSidebar"] div[role="radiogroup"]>label:hover{background:rgba(255,255,255,.09)}
+[data-testid="stSidebar"] div[role="radiogroup"]>label:has(input:checked){background:rgba(255,255,255,.18)}
+[data-testid="stSidebar"] div[role="radiogroup"]>label:has(input:checked)::before{background:#7fd1ea;border-color:#fff}
+.side-t{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#a9c7de !important;margin:14px 0 8px 2px}
+.side-card{background:rgba(255,255,255,.1);border-radius:12px;padding:10px 14px;margin-top:10px;font-size:.85rem;line-height:1.5}
 @media (max-width:768px){.block-container{padding:3rem .6rem 2rem !important}.hero{padding:14px 16px}.hero .t{font-size:1.2rem}.badge{margin-left:0}}
 </style>""", unsafe_allow_html=True)
 
@@ -116,7 +128,13 @@ cfg = st.session_state.cfg; master = st.session_state.master
 if st.session_state.get("flash"): st.success(st.session_state.pop("flash"))
 
 MENU = ["1 · Import Data", "2 · Database Dosis Pasien", "3 · Download BAPETEN", "⚙️ Parameter"]
-menu = st.radio("Menu", MENU, horizontal=True, label_visibility="collapsed", key="menu")
+with st.sidebar:
+    if logo: st.markdown(f'<img src="data:image/png;base64,{logo}" style="width:170px;margin:4px 0 6px 2px">', unsafe_allow_html=True)
+    st.markdown('<div class="side-t">Alur kerja</div>', unsafe_allow_html=True)
+    menu = st.radio("Menu", MENU, label_visibility="collapsed", key="menu")
+    tot = len(master)
+    st.markdown(f'<div class="side-card"><b>Database</b><br>{tot:,} data pasien<br>'
+                + ("● terhubung ke Supabase" if ONLINE else "● mode lokal (belum permanen)") + '</div>', unsafe_allow_html=True)
 icons = {"GR": "🩻", "CT": "🌀", "MAMMO": "🎀", "FLURO": "💧", "CATH": "❤️", "DENTAL": "🦷"}
 def modlabel(m): return f"{icons[m]} {dc.MODS[m]['label']}"
 
