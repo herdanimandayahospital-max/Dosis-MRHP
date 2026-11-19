@@ -18,11 +18,11 @@ def _b64(p):
 st.markdown("""<style>
 :root{--navy:#073763;--teal:#1B7895;--soft:#F2F5F9;--line:#DCE5EE}
 .block-container{padding-top:3.2rem !important;padding-bottom:3rem;max-width:1280px}
-.hero{background:linear-gradient(120deg,#073763 0%,#0d5a86 60%,#1B7895 100%);border-radius:18px;padding:20px 26px;margin:0 0 16px 0;display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+.hero{background:linear-gradient(120deg,#073763 0%,#0d5a86 60%,#1B7895 100%);border-radius:18px;padding:22px 26px;margin:0 0 16px 0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center}
 .hero img{height:46px;width:auto}
 .hero .t{color:#fff;font-size:1.55rem;font-weight:700;line-height:1.15}
 .hero .s{color:#cfe3f1;font-size:.9rem;margin-top:3px}
-.badge{display:inline-block;border-radius:999px;padding:3px 12px;font-size:.78rem;font-weight:600;margin-left:auto}
+.badge{display:inline-block;border-radius:999px;padding:3px 12px;font-size:.78rem;font-weight:600;margin-left:0;margin-top:2px}
 .b-ok{background:#d5eedd;color:#1e6b3a}.b-warn{background:#fff0cc;color:#8a5a00}
 .step{display:flex;align-items:center;gap:10px;margin:2px 0 8px 0}
 .step .n{background:var(--navy);color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.9rem;flex:none}
@@ -35,14 +35,16 @@ div[data-baseweb="tab-list"]{gap:4px;flex-wrap:wrap}
 button[data-baseweb="tab"]{border-radius:10px 10px 0 0;padding:8px 16px}
 [data-testid="stSidebar"]{background:linear-gradient(180deg,#073763 0%,#0b4a78 100%)}
 [data-testid="stSidebar"] *{color:#fff}
-[data-testid="stSidebar"] [data-testid="stRadio"] label p{font-size:.98rem;font-weight:600}
-[data-testid="stSidebar"] div[role="radiogroup"]{gap:0;border-left:3px solid rgba(255,255,255,.25);margin-left:10px;padding-left:0}
-[data-testid="stSidebar"] div[role="radiogroup"]>label{padding:12px 14px 12px 16px;margin:0;border-radius:0 12px 12px 0;cursor:pointer;position:relative;width:100%}
-[data-testid="stSidebar"] div[role="radiogroup"]>label>div:first-child{display:none}
-[data-testid="stSidebar"] div[role="radiogroup"]>label::before{content:"";position:absolute;left:-10px;top:50%;width:17px;height:17px;margin-top:-8px;border-radius:50%;background:#0b4a78;border:3px solid rgba(255,255,255,.45)}
-[data-testid="stSidebar"] div[role="radiogroup"]>label:hover{background:rgba(255,255,255,.09)}
-[data-testid="stSidebar"] div[role="radiogroup"]>label:has(input:checked){background:rgba(255,255,255,.18)}
-[data-testid="stSidebar"] div[role="radiogroup"]>label:has(input:checked)::before{background:#7fd1ea;border-color:#fff}
+[data-testid="stSidebar"] .stButton>button{width:100%;justify-content:flex-start;text-align:left;background:transparent;border:1px solid transparent;color:#fff;border-radius:12px;min-height:3rem;padding:.5rem 1rem;font-size:.98rem}
+[data-testid="stSidebar"] .stButton>button:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.25);color:#fff}
+[data-testid="stSidebar"] .stButton>button[kind="primary"]{background:#fff;color:#073763;border-color:#fff}
+[data-testid="stSidebar"] .stButton>button[kind="primary"] p{color:#073763 !important;font-weight:700}
+div[data-testid="stRadio"] div[role="radiogroup"]{gap:8px;flex-wrap:wrap}
+div[data-testid="stRadio"] div[role="radiogroup"]>label>div:first-child{display:none}
+div[data-testid="stRadio"] div[role="radiogroup"]>label{background:var(--soft);border:1px solid var(--line);border-radius:999px;padding:6px 16px;cursor:pointer}
+div[data-testid="stRadio"] div[role="radiogroup"]>label:hover{border-color:var(--teal)}
+div[data-testid="stRadio"] div[role="radiogroup"]>label:has(input:checked){background:var(--navy);border-color:var(--navy)}
+div[data-testid="stRadio"] div[role="radiogroup"]>label:has(input:checked) p{color:#fff !important;font-weight:600}
 .side-t{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#a9c7de !important;margin:14px 0 8px 2px}
 .side-card{background:rgba(255,255,255,.1);border-radius:12px;padding:10px 14px;margin-top:10px;font-size:.85rem;line-height:1.5}
 @media (max-width:768px){.block-container{padding:3rem .6rem 2rem !important}.hero{padding:14px 16px}.hero .t{font-size:1.2rem}.badge{margin-left:0}}
@@ -129,9 +131,13 @@ if st.session_state.get("flash"): st.success(st.session_state.pop("flash"))
 
 MENU = ["1 · Import Data", "2 · Database Dosis Pasien", "3 · Download BAPETEN", "⚙️ Parameter"]
 with st.sidebar:
-    if logo: st.markdown(f'<img src="data:image/png;base64,{logo}" style="width:170px;margin:4px 0 6px 2px">', unsafe_allow_html=True)
+    if logo: st.markdown(f'<div style="text-align:center"><img src="data:image/png;base64,{logo}" style="width:170px;margin:4px 0 6px 0"></div>', unsafe_allow_html=True)
     st.markdown('<div class="side-t">Alur kerja</div>', unsafe_allow_html=True)
-    menu = st.radio("Menu", MENU, label_visibility="collapsed", key="menu")
+    if "menu" not in st.session_state: st.session_state["menu"] = MENU[0]
+    for i, m_ in enumerate(MENU):
+        if st.button(m_, key=f"nav{i}", type="primary" if st.session_state["menu"] == m_ else "secondary", use_container_width=True):
+            st.session_state["menu"] = m_; st.rerun()
+    menu = st.session_state["menu"]
     tot = len(master)
     st.markdown(f'<div class="side-card"><b>Database</b><br>{tot:,} data pasien<br>'
                 + ("● terhubung ke Supabase" if ONLINE else "● mode lokal (belum permanen)") + '</div>', unsafe_allow_html=True)
