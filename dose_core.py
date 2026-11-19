@@ -2,7 +2,7 @@
 import io, numpy as np, pandas as pd
 
 ID_COLS = ["Kode Pasien","Nama","Gender","Umur","Berat Badan","Tanggal","Jenis Periksa","Deskripsi RIS","Visit No"]
-_D = {"GR": ["Posisi","Proyeksi","FDD","kV","mA","s","mAs"], "CT": ["No of Phase","CTDIvol","DLP"],
+_D = {"GR": ["Posisi","Proyeksi","FDD","kV","mA","s","mAs"], "CTa": ["No of Phase","CTDIvol","DLP"],
       "MAMMO": ["Proyeksi","Grid","AEC","kV","mA","s","mAs","Sudut DBT","Tebal kompresi","DAP","ESAK","MGD"],
       "FLURO": ["Fluoro detik","Laju frame","Jumlah frame","DAP","Laju kerma udara","Kerma total","Akses"],
       "CATH": ["Fluoro detik","Laju frame","Jumlah frame","DAP","Laju kerma udara","Kerma total","Akses"], "DENTAL": ["kV","mAs","FSD","DAP"]}
@@ -416,8 +416,8 @@ def drl_svg(rk, lab):
     r = rk.reset_index(drop=True); n = len(r)
     q = pd.to_numeric(r[q2c], errors="coerce"); a = pd.to_numeric(r[acc], errors="coerce") if acc in r.columns else pd.Series([np.nan] * n)
     top = _nice_max(float(max(q.max(skipna=True) if q.notna().any() else 0, a.max(skipna=True) if a.notna().any() else 0)) * 1.08)
-    gw, bw = 96, 26; ml, mr, mt, mb = 52, 16, 22, 78
-    W = ml + mr + gw * n; H = 360; ph = H - mt - mb
+    gw, bw = 96, 26; ml, mr, mt, mb = 52, 16, 74, 78
+    W = max(560, ml + mr + gw * n); H = 360; ph = H - mt - mb
     y = lambda v: mt + ph - (v / top) * ph
     s = [f'<svg viewBox="0 0 {W} {H}" width="{W}" height="{H}" xmlns="http://www.w3.org/2000/svg" font-family="Lexend,sans-serif" role="img" aria-label="Grafik {_h.escape(lab)}">']
     for i in range(6):
@@ -443,7 +443,11 @@ def drl_svg(rk, lab):
         for k, ln in enumerate(lines):
             s.append(f'<text x="{cx:.1f}" y="{y(0)+16+k*13:.1f}" text-anchor="middle" font-size="11" fill="#073763">{_h.escape(ln)}</text>')
         s.append(f'<text x="{cx:.1f}" y="{y(0)+16+len(lines)*13:.1f}" text-anchor="middle" font-size="10" fill="{"#8a5a00" if nn < 10 else "#7b8da1"}">n={nn}{" (&lt;10)" if nn < 10 else ""}</text>')
+    s.append(f'<text x="{ml}" y="22" font-size="16" font-weight="700" fill="#073763">Perbandingan DRL Lokal dengan DRL Nasional</text>'
+             f'<text x="{ml}" y="40" font-size="11" fill="#5C7691">{_h.escape(lab)} · lokal = typical value (median / Quartil 2)</text>')
+    lx = ml
+    for col, txt, wd in (("#073763", "DRL lokal (Q2)", 120), ("#c0392b", "Lokal melebihi nasional", 170), ("#9ccbe0", "DRL nasional", 110)):
+        s.append(f'<rect x="{lx}" y="50" width="12" height="12" rx="3" fill="{col}"/><text x="{lx+18}" y="60" font-size="11" fill="#073763">{txt}</text>'); lx += wd
     s.append("</svg>")
-    leg = ('<div class="drl-leg"><span><i style="background:#073763"></i>DRL lokal (Q2 / typical value)</span><span><i style="background:#c0392b"></i>Lokal melebihi nasional</span>'
-           '<span><i style="background:#9ccbe0"></i>DRL nasional</span></div>')
+    leg = ""
     return f'{leg}<div style="overflow-x:auto;padding-bottom:6px">{"".join(s)}</div>'
