@@ -144,10 +144,9 @@ if "master" not in st.session_state:
 cfg = st.session_state.cfg; master = st.session_state.master
 if st.session_state.get("flash"): st.success(st.session_state.pop("flash"))
 
-MENU = ["1 · Import Data", "2 · Database Dosis Pasien", "3 · Download BAPETEN", "4 · Dashboard", "⚙️ Parameter"]
+MENU = ["Import Data", "Database Dosis Pasien", "Download BAPETEN", "Dashboard", "⚙️ Parameter"]
 with st.sidebar:
     if logo: st.markdown(f'<div><img src="data:image/png;base64,{logo}" style="width:170px;margin:4px 0 6px 4px"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="side-t">Alur kerja</div>', unsafe_allow_html=True)
     if "menu" not in st.session_state: st.session_state["menu"] = MENU[0]
     for i, m_ in enumerate(MENU):
         if st.button(m_, key=f"nav{i}", type="primary" if st.session_state["menu"] == m_ else "secondary", use_container_width=True):
@@ -194,7 +193,7 @@ if menu == MENU[0]:
                             for mod, g in added.groupby("Modalitas"): sb_post(mod, g)
                             cfg_save(cfg)
                     st.session_state.master = master2
-                    st.session_state["flash"] = f"{len(added):,} data baru ditambahkan, {len(new)-len(added):,} dilewati karena sudah ada. Lanjut ke menu 2 untuk mengisi dosis."
+                    st.session_state["flash"] = f"{len(added):,} data baru ditambahkan, {len(new)-len(added):,} dilewati karena sudah ada. Lanjut ke menu Database Dosis Pasien untuk mengisi dosis."
                     st.rerun()
             except Exception as e:
                 st.error(f"File tidak dapat dibaca: {e}")
@@ -265,7 +264,7 @@ elif menu == MENU[1]:
 elif menu == MENU[2]:
     present = [m for m in dc.MODS if (master["Modalitas"] == m).any()]
     if not present:
-        st.info("Database masih kosong. Mulai dari menu 1 · Import Data.")
+        st.info("Database masih kosong. Mulai dari menu Import Data.")
     else:
         with st.container(border=True):
             step(3, "Download format BAPETEN", "Satu file per jenis pemeriksaan dan kategori usia, kolomnya sama dengan template Target BAPETEN.")
@@ -295,7 +294,7 @@ elif menu == MENU[2]:
                 m = st.columns(3); m[0].metric("File yang dihasilkan", len(combos)); m[1].metric("Total baris data", f"{sum(c['n'] for c in combos):,}")
                 m[2].metric("Dikecualikan (data wajib kosong)", f"{dropped:,}", help="Dosis lengkap tetapi Gender / Umur / Berat Badan (dan fase CT) kosong.")
                 if not combos:
-                    st.caption("Belum ada data yang memenuhi syarat. Isi dosis di menu 2 terlebih dahulu.")
+                    st.caption("Belum ada data yang memenuhi syarat. Isi dosis di menu Database Dosis Pasien terlebih dahulu.")
                 else:
                     tbl = pd.DataFrame([{"Jenis pemeriksaan": c["exam"], "Kategori usia": c["kategori"], "Jumlah data": c["n"],
                                          "Keterangan": "OK" if c["n"] >= 10 else "Kurang dari 10 data (minimal BAPETEN)"} for c in combos])
@@ -328,7 +327,7 @@ elif menu == MENU[2]:
 elif menu == MENU[3]:
     present = [m for m in dc.MODS if (master["Modalitas"] == m).any()]
     if not present:
-        st.info("Database masih kosong. Mulai dari menu 1 · Import Data.")
+        st.info("Database masih kosong. Mulai dari menu Import Data.")
     else:
         with st.container(border=True):
             step(4, "Dashboard DRL", "Typical value lokal (median / Quartil 2) dibandingkan dengan DRL nasional. Hanya data valid (dosis lengkap) yang dihitung.")
@@ -342,7 +341,7 @@ elif menu == MENU[3]:
             if kat != "Dewasa": st.caption("DRL nasional hanya berlaku untuk dewasa, sehingga perbandingan hanya tampil pada kategori Dewasa.")
             rk = dc.rekap(mod, dv, cfg, kat, dari, sampai, exams or None)
         if rk.empty:
-            st.info("Belum ada data valid untuk filter ini. Isi dosis di menu 2 terlebih dahulu.")
+            st.info("Belum ada data valid untuk filter ini. Isi dosis di menu Database Dosis Pasien terlebih dahulu.")
         else:
             labs = [lab for _, lab, _ in spec["metrics"] if f"{lab} Acuan" in rk.columns]
             main = labs[0] if labs else spec["metrics"][0][1]
