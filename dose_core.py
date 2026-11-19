@@ -3,15 +3,16 @@ import io, numpy as np, pandas as pd
 
 ID_COLS = ["Kode Pasien","Nama","Gender","Umur","Berat Badan","Tanggal","Jenis Periksa","Deskripsi RIS","Visit No"]
 _D = {"GR": ["Posisi","Proyeksi","FDD","kV","mA","s","mAs"], "CT": ["No of Phase","CTDIvol","DLP"],
-      "MAMMO": ["kV","mAs","Ketebalan kompresi","AGD"], "FLURO": ["Fluoro detik","DAP","Kerma total"],
-      "CATH": ["Fluoro detik","DAP","Kerma total"], "DENTAL": ["kV","mAs","FSD","DAP"]}
+      "MAMMO": ["Proyeksi","Grid","AEC","kV","mA","s","mAs","Sudut DBT","Tebal kompresi","DAP","ESAK","MGD"],
+      "FLURO": ["Fluoro detik","Laju frame","Jumlah frame","DAP","Laju kerma udara","Kerma total","Akses"],
+      "CATH": ["Fluoro detik","Laju frame","Jumlah frame","DAP","Laju kerma udara","Kerma total","Akses"], "DENTAL": ["kV","mAs","FSD","DAP"]}
 MODS = {
  "GR": dict(label="Radiografi Umum", exam="Jenis Periksa", cols=ID_COLS+_D["GR"], dose=_D["GR"],
    metrics=[("INAK","INAK (mGy)","0.00"),("ESAK","ESAK (mGy)","0.00")]),
  "CT": dict(label="CT Scan", exam="Jenis Periksa", cols=ID_COLS+_D["CT"], dose=_D["CT"],
    metrics=[("CTDIvol","CTDIvol (mGy)","0.0"),("DLP","DLP (mGy.cm)","0")]),
  "MAMMO": dict(label="Mamografi", exam="Jenis Periksa", cols=ID_COLS+_D["MAMMO"], dose=_D["MAMMO"],
-   metrics=[("AGD","AGD (mGy)","0.00")]),
+   metrics=[("MGD","MGD (mGy)","0.00")]),
  "FLURO": dict(label="Fluoroskopi", exam="Jenis Periksa", cols=ID_COLS+_D["FLURO"], dose=_D["FLURO"],
    metrics=[("DAP_Gy","DAP (Gy.cm2)","0.0"),("Kerma total","Kerma total (mGy)","0"),("Fluoro menit","Fluoro (menit)","0.0")]),
  "CATH": dict(label="Cathlab", exam="Jenis Periksa", cols=ID_COLS+_D["CATH"], dose=_D["CATH"],
@@ -79,7 +80,8 @@ def compute(mod, df, cfg):
     elif mod == "CT":
         need = _num(d["CTDIvol"]).isna() | _num(d["DLP"]).isna(); msg_need = "CTDI / DLP belum lengkap"
     elif mod == "MAMMO":
-        need = _num(d["AGD"]).isna(); msg_need = "AGD belum lengkap"
+        mas = _num(d["mAs"]); d["mAs dipakai"] = mas.fillna(_num(d["mA"]) * _num(d["s"]))
+        need = _num(d["MGD"]).isna(); msg_need = "MGD belum lengkap"
     elif mod in ("CATH", "FLURO"):
         dap = _num(d["DAP"])
         d["DAP_Gy"] = dap if cfg["unit_dap_cath"] == "Gy.cm2" else dap / 1000
@@ -208,6 +210,8 @@ def add_rows(master, new):
     start = int(pd.to_numeric(master["_rid"], errors="coerce").max() + 1) if len(master) and master["_rid"].notna().any() else 0
     n["_rid"] = range(start, start + len(n))
     out = pd.concat([master, n], ignore_index=True) if len(master) else n.reindex(columns=empty_master().columns)
+    for c in sorted({c for v in _D.values() for c in v}):
+        if c in out.columns: out[c] = out[c].astype(object)
     return out, n
 
 def register_exams(cfg, newrows):
@@ -278,3 +282,97 @@ def to_excel(mod, d, rekaps, cfg, meta, include_name=False):
     for i, (a, b) in enumerate(rows, 1): wp.cell(i, 1, a).font = Font(bold=True); wp.cell(i, 2, b)
     wp.column_dimensions["A"].width = 26
     bio = io.BytesIO(); wb.save(bio); return bio.getvalue()
+
+
+# ====================== FORMAT RESMI BAPETEN (Target_*.xls) ======================
+# header = teks persis template; src = kolom sumber (None = kosong)
+def _H(*a): return list(a)
+BAPETEN = {
+ "GR": dict(title=None, note=None, hh=30, foot_to=13, headers=[
+    ("No", None, 5.6), ("Kode Pasien", "Kode Pasien", 17.1), ("Nama Pasien", "Nama", 20.4), ("Gender\n[Male atau Female]", "Gender", 19.4), ("Umur \n(th)", "Umur", 11.8),
+    ("Berat Badan \n(kg)", "Berat Badan", 12.7), ("Posisi\n[Standing atau Supine]", "Posisi", 24.3), ("Proyeksi", "Proyeksi", 12.7), ("FDD\n(cm)", "FDD", 8.4),
+    ("kV", "kV", 7.0), ("mA", "mA", 7.4), ("s", "s", 9.3), ("mAs", "mAs dipakai", 9.4)]),
+ "CT": dict(title=None, note="Note: Silahkan isi semua form dengan data sample pasien (minimal 10 data) berdasarkan kelompok umur yang telah dibuat pada setting data survey Anda. ",
+    hh=30, foot_to=9, headers=[
+    ("No", None, 5.6), ("Kode Pasien\n(Jika Ada)", "Kode Pasien", 23.1), ("Nama Pasien\n(Jika Ada)", "Nama", 30.9), ("Gender *\n[Male atau Female]", "Gender", 20.3),
+    ("Umur * \n(th)", "Umur", 16.7), ("Berat Badan *\n(kg)", "Berat Badan", 19.9), ("No of Phase *\n[ 0/1/2/3/>=4 ]", "No of Phase", 20.6),
+    ("Average CTDI *\n(mGy)", "CTDIvol", 23.6), ("Total DLP *\n(mGy cm)", "DLP", 19.0)]),
+ "MAMMO": dict(title="FORM MAMOGRAFI DENGAN INDIKATOR DOSIS", note="Note: (1) Gunakan simbol titik (.) untuk angka desimal. contoh: 2.05  (2) Untuk tipe pilihan, silahkan isikan sesuai dengan pilihan yang telah disediakan",
+    hh=30, foot_to=13, headers=[
+    ("No", None, 5.6), ("Kode Pasien", "Kode Pasien", 17.6), ("Nama Pasien", "Nama", 17.7), ("Gender\n[Male atau Female]", "Gender", 21.6), ("Umur \n(th)", "Umur", 11.7),
+    ("Berat Badan \n(kg)", "Berat Badan", 12.1), ("Pilih Proyeksi\n[LCC/LMLO/RCC/RMLO]", "Proyeksi", 24.4), ("Pilih Grid\n[Y/N]", "Grid", 12.7), ("Pilih AEC\n[On/Off]", "AEC", 12.7),
+    ("kV", "kV", 8.0), ("mA", "mA", 7.0), ("s", "s", 7.3), ("mAs", "mAs dipakai", 8.6), ("\u03a3 Projection Angle of DBT", "Sudut DBT", 18.1),
+    ("T, Tebal Kompresi (mm)", "Tebal kompresi", 17.9), ("DAP (mGy.cm2)", "DAP", 13.0), ("ESAK (mGy)", "ESAK", 14.3), ("MGD (mGy)", "MGD", 12.0)]),
+ "IR": dict(title=None, note="Note: Kateter masuk melalui Radial [R] atau Femoral [F] atau Others [O] ", hh=45, foot_to=11, headers=[
+    ("No", None, 5.6), ("Kode Pasien", "Kode Pasien", 17.1), ("Nama Pasien", "Nama", 20.4), ("Gender\n[Male atau Female]", "Gender", 19.4), ("Umur \n(th)", "Umur", 11.8),
+    ("Berat Badan \n(kg)", "Berat Badan", 12.7), ("Fluoro Total \n(detik)", "Fluoro detik", 16.7), ("Laju Frame\n(fr/s)", "Laju frame", 14.7), ("Jumlah\n(frame/citra)", "Jumlah frame", 16.0),
+    ("DAP\n ( Gy.cm2)", "DAP_Gy", 22.6), ("Laju Kerma Udara \n(mGy/jam)", "Laju kerma udara", 17.6), ("Kerma Total \n(mGy)", "Kerma total", 13.3), ("Kateter masuk via \n(R/F/O)", "Akses", 15.6)]),
+}
+BAPETEN_FORM = {"GR": "GR", "CT": "CT", "MAMMO": "MAMMO", "CATH": "IR", "FLURO": "IR"}   # DENTAL: template belum ada
+
+def _clean_val(v):
+    if v is None or v is pd.NaT: return None
+    if isinstance(v, float) and np.isnan(v): return None
+    if isinstance(v, (np.integer,)): return int(v)
+    if isinstance(v, (np.floating, float)):
+        v = float(v); return int(v) if v.is_integer() else round(v, 4)
+    return v
+
+def bapeten_xlsx(mod, df, include_name=False):
+    """Satu file sesuai template resmi BAPETEN (header, catatan, lebar kolom, kotak data, footer)."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter as L
+    sp = BAPETEN[BAPETEN_FORM[mod]]; n = len(sp["headers"]); ws = (wb := Workbook()).active; ws.title = "Sheet1"
+    thin = Side(style="thin"); bd = Border(left=thin, right=thin, top=thin, bottom=thin)
+    if sp["title"]:
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n); c = ws.cell(1, 1, sp["title"])
+        c.font = Font(name="Calibri", size=11, bold=True); c.fill = PatternFill("solid", fgColor="FFCC99"); c.alignment = Alignment(horizontal="center")
+        for j in range(1, n + 1): ws.cell(1, j).fill = PatternFill("solid", fgColor="FFCC99")
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=n); c = ws.cell(2, 1, "DATA SURVEY")
+    c.font = Font(name="Calibri", size=20, bold=True); c.alignment = Alignment(horizontal="center"); ws.row_dimensions[2].height = 26.25
+    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=n)
+    if sp["note"]: c = ws.cell(3, 1, sp["note"]); c.font = Font(name="Calibri", size=11); c.alignment = Alignment(horizontal="left")
+    ws.row_dimensions[4].height = sp["hh"]
+    for j, (h, src, w) in enumerate(sp["headers"], 1):
+        c = ws.cell(4, j, h); c.font = Font(name="Calibri", size=11, bold=True); c.fill = PatternFill("solid", fgColor="CCCCFF")
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True); c.border = bd; ws.column_dimensions[L(j)].width = w
+    d = df.copy()
+    if "Gender" in d.columns: d["Gender"] = d["Gender"].map({"M": "Male", "F": "Female"}).fillna(d["Gender"])
+    if not include_name and "Nama" in d.columns: d["Nama"] = None
+    rows = max(len(d), 30)
+    for i in range(rows):
+        r = 5 + i
+        for j, (h, src, w) in enumerate(sp["headers"], 1):
+            v = (i + 1) if (src is None and i < len(d)) else (_clean_val(d.iloc[i][src]) if (src and i < len(d) and src in d.columns) else None)
+            c = ws.cell(r, j, v); c.border = bd; c.font = Font(name="Calibri", size=11)
+    fr = 5 + rows + 1
+    ws.merge_cells(start_row=fr, start_column=1, end_row=fr, end_column=sp["foot_to"]); c = ws.cell(fr, 1, "Badan Pengawas Tenaga Nuklir (BAPETEN)")
+    c.font = Font(name="Calibri", size=11, bold=True); c.alignment = Alignment(horizontal="center")
+    ws.page_setup.orientation = "landscape"; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0; ws.sheet_properties.pageSetUpPr.fitToPage = True
+    bio = io.BytesIO(); wb.save(bio); return bio.getvalue()
+
+def _slug(t): return re.sub(r"[^A-Za-z0-9]+", "_", str(t)).strip("_")[:60] or "x"
+
+REQ = ["Gender", "Umur", "Berat Badan"]
+def bapeten_combos(mod, dv, exams, cats, require_bb=True):
+    """dv = data valid (Cek OK). Hasil: list dict(exam, kategori, df, n). Syarat wajib: gender, umur, BB (+ fase CT)."""
+    ex = MODS[mod]["exam"]; out = []; req = REQ + (["No of Phase"] if mod == "CT" else [])
+    if not require_bb: req = [c for c in req if c != "Berat Badan"]
+    ok = dv.copy()
+    for c in req: ok = ok[ok[c].notna() & (ok[c].astype(str).str.strip() != "")] if c in ok.columns else ok.iloc[0:0]
+    names = exams or sorted(ok[ex].dropna().unique())
+    for e in names:
+        for k in cats:
+            g = ok[(ok[ex] == e) & (ok["Kategori usia"] == k)]
+            if len(g): out.append(dict(exam=e, kategori=k, df=g.sort_values("Tanggal") if "Tanggal" in g.columns else g, n=len(g)))
+    return out, len(dv) - len(ok)
+
+def bapeten_zip(mod, combos, include_name=False):
+    import zipfile
+    bio = io.BytesIO()
+    with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as z:
+        for c in combos: z.writestr(bapeten_filename(mod, c), bapeten_xlsx(mod, c["df"], include_name))
+    return bio.getvalue()
+
+def bapeten_filename(mod, c): return f"BAPETEN_{BAPETEN_FORM[mod]}_{_slug(c['exam'])}_{c['kategori']}.xlsx"
