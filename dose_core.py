@@ -21,6 +21,7 @@ MODS = {
    metrics=[("DAP_mGy","DAP (mGy.cm2)","0.0")]),
 }
 DEFAULT_CFG = dict(
+  staff_units=["Cath-Lab","OT","Radiologi","Poli Gigi","Poli BMD","Kedokteran Nuklir"], periods=["Des-Feb","Mar-Mei","Jun-Agt","Sep-Nov","Des-Feb"], nbd_rs=10.0,
   bayi_max=4, dewasa_min=15, bsf=1.35,
   out_pts=[[60,61.1],[70,70.8],[80,81.8],[90,91.3],[100,103.3]],
   unit_dap_cath="mGy.cm2", unit_dap_dental="mGy.cm2",
@@ -451,3 +452,138 @@ def drl_svg(rk, lab):
     s.append("</svg>")
     leg = ""
     return f'{leg}<div style="overflow-x:auto;padding-bottom:6px">{"".join(s)}</div>'
+
+
+# ====================== DOSIS PEKERJA / STAFF ======================
+import json as _json, os as _os
+PK = ["P1", "P2", "P3", "P4", "P5"]
+SPECIAL = ["n/a", "Pergantian TLD", "Penambahan TLD Baru", "Resign"]
+ROSTER_COLS = ["SID", "No TLD", "Nama", "Unit", "Status", "Catatan"]
+SDOSE_COLS = ["Tahun", "SID"] + PK + ["NBD", "Catatan"]
+
+def sval(v):
+    """Angka mSv dari isian (boleh koma). Teks khusus (n/a, Resign, ...) -> None."""
+    if v is None or (isinstance(v, float) and np.isnan(v)): return None
+    try: return float(str(v).strip().replace(",", "."))
+    except ValueError: return None
+
+def staff_total(row):
+    return round(sum(x for x in (sval(row.get(p)) for p in PK) if x is not None), 4)
+
+def empty_roster(): return pd.DataFrame(columns=ROSTER_COLS)
+def empty_sdose(): return pd.DataFrame(columns=SDOSE_COLS)
+
+def next_sid(roster): return int(pd.to_numeric(roster["SID"], errors="coerce").max() + 1) if len(roster) and roster["SID"].notna().any() else 1
+
+def seed_staff():
+    p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "seed_pekerja.json")
+    if not _os.path.exists(p): return empty_roster(), empty_sdose()
+    d = _json.load(open(p, encoding="utf-8"))
+    st_ = {int(k): v for k, v in d.get("status", {}).items()}
+    r = pd.DataFrame([{"SID": x["sid"], "No TLD": x["tld"], "Nama": x["nama"], "Unit": x["unit"], "Status": st_.get(x["sid"], "Aktif"), "Catatan": None} for x in d["roster"]])
+    s = pd.DataFrame([{"Tahun": x["Tahun"], "SID": x["SID"], **{k: (x[k] if x[k] != "" else None) for k in PK}, "NBD": x["NBD"], "Catatan": None} for x in d["dose"]])
+    return r, s
+
+def staff_year(roster, sdose, tahun, unit=None):
+    """Tabel isian satu tahun (semua petugas aktif + yang punya data di tahun itu), format rekap PDF."""
+    r = roster.copy()
+    if unit: r = r[r["Unit"] == unit]
+    d = sdose[pd.to_numeric(sdose["Tahun"], errors="coerce") == int(tahun)] if len(sdose) else sdose
+    has = set(pd.to_numeric(d["SID"], errors="coerce").dropna().astype(int)) if len(d) else set()
+    r = r[(r["Status"].fillna("Aktif") != "Resign") | r["SID"].astype(int).isin(has)] if len(r) else r
+    m = r.merge(d.drop(columns=["Tahun"], errors="ignore").assign(SID=lambda x: pd.to_numeric(x["SID"], errors="coerce")) if len(d) else pd.DataFrame(columns=["SID"] + PK + ["NBD"]),
+                on="SID", how="left", suffixes=("", "_d"))
+    for p in PK:
+        if p not in m.columns: m[p] = None
+    if "NBD" not in m.columns: m["NBD"] = None
+    m["NBD"] = pd.to_numeric(m["NBD"], errors="coerce")
+    m["Total"] = [staff_total(x) for x in m.to_dict("records")]
+    return m[["SID", "Unit", "No TLD", "Nama"] + PK + ["NBD", "Total"]].reset_index(drop=True)
+
+def staff_save_year(sdose, tahun, edited, default_nbd=10.0):
+    """Gabungkan hasil edit satu tahun ke tabel dosis (ganti baris SID yang sama)."""
+    e = edited.copy(); e["SID"] = pd.to_numeric(e["SID"], errors="coerce").astype(int)
+    keep = sdose[~((pd.to_numeric(sdose["Tahun"], errors="coerce") == int(tahun)) & (pd.to_numeric(sdose["SID"], errors="coerce").isin(e["SID"])))] if len(sdose) else sdose
+    new = pd.DataFrame({"Tahun": int(tahun), "SID": e["SID"].values, **{p: e[p].values for p in PK}, "NBD": pd.to_numeric(e["NBD"], errors="coerce").fillna(default_nbd).values, "Catatan": None})
+    new = new[new[PK].notna().any(axis=1) | (new["SID"] > 0)]
+    return pd.concat([keep, new], ignore_index=True)
+
+def staff_status(total, nbd):
+    nbd = nbd if (nbd is not None and not pd.isna(nbd)) else 10.0
+    return "Melebihi NBD RS" if total > nbd else "Normal"
+
+def mark_before(sdose, sid, tahun, start_idx, label, nbd=10.0):
+    """Periode sebelum start_idx (0-4) yang masih kosong diberi label (mis. 'Pergantian TLD')."""
+    s = sdose.copy(); m = (pd.to_numeric(s["Tahun"], errors="coerce") == int(tahun)) & (pd.to_numeric(s["SID"], errors="coerce") == int(sid))
+    if not m.any():
+        s = pd.concat([s, pd.DataFrame([{"Tahun": int(tahun), "SID": int(sid), **{p: None for p in PK}, "NBD": nbd, "Catatan": None}])], ignore_index=True)
+        m = (pd.to_numeric(s["Tahun"], errors="coerce") == int(tahun)) & (pd.to_numeric(s["SID"], errors="coerce") == int(sid))
+    for p in PK[:start_idx]:
+        s.loc[m, p] = s.loc[m, p].apply(lambda v: label if (v is None or (isinstance(v, float) and np.isnan(v)) or str(v).strip() == "") else v)
+    return s
+
+def staff_excel(tahun, tbl, labels):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    wb = Workbook(); ws = wb.active; ws.title = f"Rekap {tahun}"
+    thin = Side(style="thin", color="7F7F7F"); bd = Border(left=thin, right=thin, top=thin, bottom=thin)
+    ws["A1"] = f"Rekap Dosis Pekerja Radiasi Tahun {tahun}"; ws["A1"].font = Font(size=14, bold=True); ws.merge_cells("A1:J1"); ws["A1"].alignment = Alignment(horizontal="center")
+    r = 3
+    hdr = ["No", "No TLD", "Nama Petugas"] + labels + ["NBD RS (mSv)", "Total Dosis Dalam 1 Tahun (mSv)"]
+    for unit, g in tbl.groupby("Unit", sort=False):
+        ws.cell(r, 1, unit).font = Font(bold=True); ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=len(hdr))
+        for j in range(1, len(hdr) + 1): ws.cell(r, j).fill = PatternFill("solid", fgColor="DCE6F1")
+        ws.cell(r, 1).alignment = Alignment(horizontal="center"); r += 1
+        ws.cell(r, 4, "Dosis (mSv)").font = Font(bold=True); ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=3 + len(labels)); ws.cell(r, 4).alignment = Alignment(horizontal="center"); r += 1
+        for j, h in enumerate(hdr, 1):
+            c = ws.cell(r, j, h); c.font = Font(bold=True); c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True); c.border = bd
+        r += 1
+        for i, x in enumerate(g.to_dict("records"), 1):
+            vals = [i, x["No TLD"], x["Nama"]] + [(sval(x[p]) if sval(x[p]) is not None else (x[p] if x[p] not in (None, "") and not (isinstance(x[p], float) and np.isnan(x[p])) else None)) for p in PK] + [x["NBD"], x["Total"]]
+            for j, v in enumerate(vals, 1):
+                c = ws.cell(r, j, v); c.border = bd; c.alignment = Alignment(horizontal="left" if j == 3 else "center")
+                if j == len(vals): c.fill = PatternFill("solid", fgColor="BDD7EE")
+                if j == len(vals) - 1: c.fill = PatternFill("solid", fgColor="D9D9D9")
+            r += 1
+        r += 1
+    for col, w in zip("ABCDEFGHIJ", (5, 16, 40, 11, 11, 11, 11, 11, 13, 20)): ws.column_dimensions[col].width = w
+    bio = io.BytesIO(); wb.save(bio); return bio.getvalue()
+
+def staff_pdf(tahun, tbl, labels, rs=""):
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib import colors
+    bio = io.BytesIO(); doc = SimpleDocTemplate(bio, pagesize=landscape(A4), leftMargin=28, rightMargin=28, topMargin=28, bottomMargin=28)
+    st = getSampleStyleSheet(); el = [Paragraph(f"<b>Rekapitulasi Dosis Pekerja Radiasi Tahun {tahun}</b>", st["Title"])]
+    if rs: el.append(Paragraph(rs, st["Normal"]))
+    for unit, g in tbl.groupby("Unit", sort=False):
+        el += [Spacer(1, 10), Paragraph(f"<b>{unit}</b>", st["Heading3"])]
+        data = [["No", "No TLD", "Nama Petugas"] + labels + ["NBD RS\n(mSv)", "Total 1 Tahun\n(mSv)"]]
+        for i, x in enumerate(g.to_dict("records"), 1):
+            cell = lambda v: "" if (v is None or (isinstance(v, float) and np.isnan(v))) else (f"{sval(v):g}" if sval(v) is not None else str(v))
+            data.append([i, x["No TLD"], x["Nama"]] + [cell(x[p]) for p in PK] + [f"{x['NBD']:g}" if not pd.isna(x["NBD"]) else "", f"{x['Total']:g}"])
+        t = Table(data, repeatRows=1, colWidths=[24, 70, 210] + [58] * len(labels) + [52, 78])
+        t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), .4, colors.grey), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#CCCCFF")), ("FONTSIZE", (0, 0), (-1, -1), 8),
+                               ("ALIGN", (0, 0), (-1, -1), "CENTER"), ("ALIGN", (2, 1), (2, -1), "LEFT"), ("BACKGROUND", (-2, 1), (-2, -1), colors.HexColor("#D9D9D9")),
+                               ("BACKGROUND", (-1, 1), (-1, -1), colors.HexColor("#BDD7EE")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+        el.append(t)
+    doc.build(el); return bio.getvalue()
+
+def bar_svg(title, labels, values, ref=None, ref_label="NBD RS", unit="mSv", color="#073763"):
+    """Grafik batang sederhana (SVG) dengan garis acuan putus-putus."""
+    import html as _h
+    n = len(labels); gw = 70; ml, mr, mt, mb = 52, 16, 52, 70; W = max(520, ml + mr + gw * n); H = 330; ph = H - mt - mb
+    top = _nice_max(max([float(v) for v in values] + ([float(ref)] if ref else [0])) * 1.12 or 1); y = lambda v: mt + ph - (v / top) * ph
+    s = [f'<svg viewBox="0 0 {W} {H}" width="{W}" height="{H}" xmlns="http://www.w3.org/2000/svg" font-family="Lexend,sans-serif">',
+         f'<text x="{ml}" y="22" font-size="16" font-weight="700" fill="#073763">{_h.escape(title)}</text>']
+    for i in range(6):
+        v = top * i / 5; s.append(f'<line x1="{ml}" x2="{W-mr}" y1="{y(v):.1f}" y2="{y(v):.1f}" stroke="#E3EBF3"/><text x="{ml-8}" y="{y(v)+4:.1f}" text-anchor="end" font-size="11" fill="#5C7691">{v:g}</text>')
+    for i, (lb, v) in enumerate(zip(labels, values)):
+        cx = ml + gw * i + gw / 2; v = float(v); col = "#c0392b" if (ref and v > ref) else color
+        s.append(f'<rect x="{cx-16:.1f}" y="{y(v):.1f}" width="32" height="{max(1, y(0)-y(v)):.1f}" rx="3" fill="{col}"><title>{_h.escape(str(lb))}: {v:g} {unit}</title></rect><text x="{cx:.1f}" y="{y(v)-5:.1f}" text-anchor="middle" font-size="11" font-weight="600" fill="{col}">{v:g}</text>')
+        import textwrap
+        for k, ln in enumerate(textwrap.wrap(str(lb), 11)[:3]): s.append(f'<text x="{cx:.1f}" y="{y(0)+15+k*12:.1f}" text-anchor="middle" font-size="10.5" fill="#073763">{_h.escape(ln)}</text>')
+    if ref:
+        s.append(f'<line x1="{ml}" x2="{W-mr}" y1="{y(ref):.1f}" y2="{y(ref):.1f}" stroke="#c0392b" stroke-dasharray="6 4"/><text x="{W-mr}" y="{y(ref)-5:.1f}" text-anchor="end" font-size="11" fill="#c0392b">{_h.escape(ref_label)} {ref:g} {unit}</text>')
+    s.append("</svg>"); return f'<div style="overflow-x:auto">{"".join(s)}</div>'

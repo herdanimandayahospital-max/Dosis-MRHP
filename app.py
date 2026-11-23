@@ -65,7 +65,7 @@ div[data-testid="stRadio"] div[role="radiogroup"]>label:has(input:checked) p{col
 .rb{display:inline-block;border-radius:999px;padding:3px 10px;font-size:.78rem;font-weight:600;white-space:nowrap}
 .rb.ok{background:#d5eedd;color:#1e6b3a}.rb.bad{background:#f8d0d0;color:#9c1c1c}.rb.na{background:#eceff3;color:#5C7691}
 @media (max-width:768px){.drl-row{grid-template-columns:1fr}}
-.side-t{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#a9c7de !important;margin:14px 0 8px 2px}
+.side-t{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#a9c7de !important;margin:16px 0 4px 6px}
 .side-card{background:rgba(255,255,255,.1);border-radius:12px;padding:12px 16px;margin-top:18px;font-size:.85rem;line-height:1.5}
 @media (max-width:768px){.block-container{padding:3rem .6rem 2rem !important}.hero{padding:14px 16px}.hero .t{font-size:1.2rem}.badge{margin-left:0}}
 </style>""", unsafe_allow_html=True)
@@ -142,6 +142,27 @@ if PW and not st.session_state.get("dose_ok"):
 if not ONLINE:
     st.info("**Mode lokal** — semua fitur bisa dipakai, tetapi data hilang jika halaman ditutup. Hubungkan Supabase di *Settings → Secrets* agar tersimpan permanen.")
 
+def sb_get_mod(mod):
+    if not ONLINE: return None
+    rows, off = [], 0
+    while True:
+        r = requests.get(f"{URL}/rest/v1/dose_entries", headers={**H, "Range": f"{off}-{off+999}"}, params={"modality": f"eq.{mod}", "select": "data", "order": "id"}, timeout=40)
+        r.raise_for_status(); b = r.json(); rows += [x["data"] for x in b]
+        if len(b) < 1000: break
+        off += 1000
+    return pd.DataFrame(rows)
+def load_staff():
+    try:
+        ro, sd = sb_get_mod("STAFF"), sb_get_mod("STAFFDOSE")
+    except Exception as e:
+        st.warning(f"Gagal membaca data pekerja: {e}"); ro = sd = None
+    ro = dc.empty_roster() if ro is None or ro.empty else ro; sd = dc.empty_sdose() if sd is None or sd.empty else sd
+    for c_ in dc.ROSTER_COLS:
+        if c_ not in ro.columns: ro[c_] = None
+    for c_ in dc.SDOSE_COLS:
+        if c_ not in sd.columns: sd[c_] = None
+    return ro[dc.ROSTER_COLS].copy(), sd[dc.SDOSE_COLS].copy()
+if "staff" not in st.session_state: st.session_state.staff, st.session_state.sdose = load_staff()
 if "cfg" not in st.session_state: st.session_state.cfg = cfg_load()
 if "master" not in st.session_state:
     try: st.session_state.master = sb_get_all()
@@ -150,12 +171,16 @@ cfg = st.session_state.cfg; master = st.session_state.master
 if st.session_state.get("flash"): st.success(st.session_state.pop("flash"))
 
 MENU = ["Import Data", "Database Dosis Pasien", "Download BAPETEN", "Dashboard", "⚙️ Parameter"]
+M_ISI, M_REKAP, M_KELOLA = "Isi Dosis Pekerja", "Rekap Dosis Pekerja", "Kelola Petugas"
+GROUPS = [("Dosis Pasien", MENU[:4]), ("Dosis Pekerja", [M_ISI, M_REKAP, M_KELOLA]), ("", [MENU[4]])]
 with st.sidebar:
     if logo: st.markdown(f'<div class="side-logo"><img src="data:image/png;base64,{logo}"></div>', unsafe_allow_html=True)
     if "menu" not in st.session_state: st.session_state["menu"] = MENU[0]
-    for i, m_ in enumerate(MENU):
-        if st.button(m_, key=f"nav{i}", type="primary" if st.session_state["menu"] == m_ else "secondary", use_container_width=True):
-            st.session_state["menu"] = m_; st.rerun()
+    for g_, items_ in GROUPS:
+        if g_: st.markdown(f'<div class="side-t">{g_}</div>', unsafe_allow_html=True)
+        for m_ in items_:
+            if st.button(m_, key=f"nav_{m_}", type="primary" if st.session_state["menu"] == m_ else "secondary", use_container_width=True):
+                st.session_state["menu"] = m_; st.rerun()
     menu = st.session_state["menu"]
     tot = len(master)
     st.markdown(f'<div class="side-card"><b>Database</b><br>{tot:,} data pasien<br>'
@@ -190,15 +215,25 @@ if menu == MENU[0]:
                 c1.markdown("**Akan masuk ke database**"); c1.dataframe(prev, hide_index=True, use_container_width=True)
                 c2.markdown("**Diabaikan (tidak memakai radiasi pengion / bukan dosis pasien)**")
                 c2.dataframe(pd.DataFrame(list(skipped.items()), columns=["Modalitas RIS", "Jumlah"]), hide_index=True, use_container_width=True)
-                if st.button("Proses & tambahkan ke database", type="primary"):
+                mode = st.radio("Mode import", ["Tambahkan ke data yang ada", "Ganti data (hapus data modalitas yang ada di file, lalu isi dari file)"], key="imp_mode")
+                ganti = mode.startswith("Ganti"); ok_ganti = True
+                if ganti:
+                    mods_f = sorted(new["Modalitas"].unique()); n_del = int(master["Modalitas"].isin(mods_f).sum())
+                    st.warning(f"Mode Ganti menghapus {n_del:,} data yang sudah ada pada modalitas: {', '.join(dc.MODS[m]['label'] for m in mods_f)}, termasuk dosis yang sudah Anda isi.")
+                    ok_ganti = st.checkbox("Saya mengerti, hapus data lama dan ganti dengan isi file ini")
+                if st.button("Proses & ganti database" if ganti else "Proses & tambahkan ke database", type="primary", disabled=not ok_ganti):
                     with st.spinner("Memproses..."):
-                        master2, added = dc.add_rows(master, new)
+                        base = master[~master["Modalitas"].isin(new["Modalitas"].unique())].reset_index(drop=True) if ganti else master
+                        master2, added = dc.add_rows(base, new)
                         dc.register_exams(cfg, added)
                         if ONLINE:
-                            for mod, g in added.groupby("Modalitas"): sb_post(mod, g)
+                            if ganti:
+                                for mod in new["Modalitas"].unique(): sb_replace(mod, added[added["Modalitas"] == mod])
+                            else:
+                                for mod, g in added.groupby("Modalitas"): sb_post(mod, g)
                             cfg_save(cfg)
                     st.session_state.master = master2
-                    st.session_state["flash"] = f"{len(added):,} data baru ditambahkan, {len(new)-len(added):,} dilewati karena sudah ada. Lanjut ke menu Database Dosis Pasien untuk mengisi dosis."
+                    st.session_state["flash"] = (f"{len(added):,} data menggantikan data lama." if ganti else f"{len(added):,} data baru ditambahkan, {len(new)-len(added):,} dilewati karena sudah ada.") + " Lanjut ke menu Database Dosis Pasien untuk mengisi dosis."
                     st.rerun()
             except Exception as e:
                 st.error(f"File tidak dapat dibaca: {e}")
@@ -373,14 +408,130 @@ elif menu == MENU[3]:
                 fmt = {c_: "{:.2f}" for c_ in rk.columns if c_ not in ("Jenis Pemeriksaan", "Jumlah Sampel", "Status")}
                 st.dataframe(rk.style.format(fmt, na_rep="-"), use_container_width=True, hide_index=True)
 
+# =================================================== DOSIS PEKERJA
+elif menu in (M_ISI, M_REKAP, M_KELOLA):
+    roster, sdose = st.session_state.staff, st.session_state.sdose
+    labels = cfg.get("periods", dc.DEFAULT_CFG["periods"]); units_all = list(dict.fromkeys(list(cfg.get("staff_units", [])) + sorted(roster["Unit"].dropna().unique())))
+    def persist(ro=None, sd=None):
+        if ro is not None: st.session_state.staff = ro; sb_replace("STAFF", ro)
+        if sd is not None: st.session_state.sdose = sd; sb_replace("STAFFDOSE", sd)
+    if roster.empty:
+        with st.container(border=True):
+            step("👥", "Data petugas masih kosong", "Muat data awal dari rekap PDF 2021–2026 (petugas aktif dan yang sudah tidak aktif, 6 unit) atau tambah petugas manual di menu Kelola Petugas.")
+            if st.button("Muat data awal dari rekap PDF", type="primary"):
+                ro, sd = dc.seed_staff(); persist(ro, sd); st.session_state["flash"] = f"{len(ro)} petugas dan {len(sd)} data dosis dimuat."; st.rerun()
+    # ---------------------------------------------- isi dosis
+    if menu == M_ISI and not roster.empty:
+        with st.container(border=True):
+            step("🧾", "Isi dosis pekerja radiasi", "Isi dosis TLD (mSv) per periode seperti rekap tahunan. Selain angka boleh: n/a, Pergantian TLD, Penambahan TLD Baru, Resign.")
+            c1, c2 = st.columns(2)
+            tahun = c1.number_input("Tahun", 2015, 2100, dt.date.today().year, key="s_tahun")
+            unit = c2.selectbox("Unit", units_all, key="s_unit")
+            tbl = dc.staff_year(roster, sdose, tahun, unit)
+            tbl["Status"] = [dc.staff_status(t, n) for t, n in zip(tbl["Total"], tbl["NBD"])]
+            ver = st.session_state.setdefault("s_ver", 0)
+            cc = {"SID": None, "Unit": None, "No TLD": st.column_config.TextColumn("No TLD", width="small"), "Nama": st.column_config.TextColumn("Nama Petugas", width="large"),
+                  "NBD": st.column_config.NumberColumn("NBD RS (mSv)", min_value=0.0, format="%g", width="small"), "Total": st.column_config.NumberColumn("Total 1 Tahun (mSv)", format="%g"),
+                  "Status": st.column_config.TextColumn("Status")}
+            for i, p in enumerate(dc.PK): cc[p] = st.column_config.TextColumn(labels[i] if i < len(labels) else p, width="small", help=f"Periode {i+1}")
+            show = tbl.copy()
+            for p in dc.PK: show[p] = show[p].astype(object)
+            ed = st.data_editor(show, column_config=cc, disabled=["No TLD", "Nama", "Total", "Status"], use_container_width=True, hide_index=True, key=f"s_ed_{tahun}_{unit}_{ver}", height=min(520, 60 + 36 * max(3, len(show))))
+            if len(tbl) == 0: st.caption("Belum ada petugas di unit ini. Tambahkan di menu Kelola Petugas.")
+            if st.button("💾 Simpan dosis", type="primary", key="s_save"):
+                try:
+                    persist(sd=dc.staff_save_year(sdose, tahun, ed[["SID"] + dc.PK + ["NBD"]], cfg.get("nbd_rs", 10.0)))
+                    st.session_state["s_ver"] = ver + 1; st.session_state["flash"] = f"Dosis {unit} tahun {tahun} tersimpan."; st.rerun()
+                except Exception as e: st.error(f"Gagal menyimpan: {e}")
+            st.caption("Total dihitung otomatis dari semua periode yang berisi angka. Status 'Melebihi NBD RS' muncul bila total di atas pembatas dosis RS.")
+    # ---------------------------------------------- rekap
+    elif menu == M_REKAP and not roster.empty:
+        yrs = sorted(set(pd.to_numeric(sdose["Tahun"], errors="coerce").dropna().astype(int)) | {dt.date.today().year}, reverse=True)
+        with st.container(border=True):
+            step("📋", "Rekap dosis pekerja radiasi", "Format sama dengan rekapitulasi tahunan: per unit, per periode, total 1 tahun.")
+            tahun = st.selectbox("Tahun", yrs, key="r_tahun")
+            tbl = dc.staff_year(roster, sdose, tahun)
+            tbl["Status"] = [dc.staff_status(t, n) for t, n in zip(tbl["Total"], tbl["NBD"])]
+            real = tbl[~tbl["Nama"].astype(str).str.lower().str.startswith("kontrol")]
+            k = st.columns(4); k[0].metric("Jumlah petugas", len(real)); k[1].metric("Dosis kolektif (mSv)", f"{real['Total'].sum():.3f}")
+            k[2].metric("Rata-rata per petugas", f"{real['Total'].mean():.3f}" if len(real) else "-")
+            mx = real.loc[real["Total"].idxmax()] if len(real) else None
+            k[3].metric("Tertinggi (mSv)", f"{mx['Total']:g}" if mx is not None else "-", help=str(mx["Nama"]) if mx is not None else None)
+            over = int((real["Status"] == "Melebihi NBD RS").sum())
+            if over: st.warning(f"{over} petugas melebihi NBD RS pada tahun {tahun}.")
+        if len(real):
+            nbd = float(cfg.get("nbd_rs", 10.0))
+            with st.container(border=True):
+                avg = real.groupby("Unit")["Total"].mean().round(3).sort_values(ascending=False)
+                st.markdown(dc.bar_svg(f"Rata-rata dosis per unit · {tahun}", list(avg.index), list(avg.values), ref=nbd), unsafe_allow_html=True)
+                top = real.sort_values("Total", ascending=False).head(10)
+                st.markdown(dc.bar_svg(f"10 petugas dengan dosis tertinggi · {tahun}", [str(x) for x in top["Nama"]], list(top["Total"]), ref=nbd), unsafe_allow_html=True)
+        with st.container(border=True):
+            for u, g in tbl.groupby("Unit", sort=False):
+                st.markdown(f"**{u}**")
+                v = g[["No TLD", "Nama"] + dc.PK + ["NBD", "Total", "Status"]].copy(); v.columns = ["No TLD", "Nama Petugas"] + [labels[i] if i < len(labels) else p for i, p in enumerate(dc.PK)] + ["NBD RS (mSv)", "Total 1 Tahun (mSv)", "Status"]
+                v.insert(0, "No", range(1, len(v) + 1))
+                st.dataframe(v, use_container_width=True, hide_index=True)
+            d1, d2 = st.columns(2)
+            d1.download_button("⬇️ Download Excel", dc.staff_excel(tahun, tbl, labels), file_name=f"Rekap_Dosis_Pekerja_{tahun}.xlsx", type="primary", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            try: d2.download_button("⬇️ Download PDF", dc.staff_pdf(tahun, tbl, labels, RS), file_name=f"Rekap_Dosis_Pekerja_{tahun}.pdf", mime="application/pdf")
+            except Exception as e: d2.caption(f"PDF belum tersedia: {e}")
+        with st.expander("Total dosis per petugas lintas tahun"):
+            allt = pd.concat([dc.staff_year(roster, sdose, y_).assign(Tahun=y_) for y_ in sorted(set(pd.to_numeric(sdose["Tahun"], errors="coerce").dropna().astype(int)))], ignore_index=True) if len(sdose) else pd.DataFrame()
+            if len(allt): st.dataframe(allt.pivot_table(index=["Unit", "Nama"], columns="Tahun", values="Total", aggfunc="sum").reset_index(), use_container_width=True, hide_index=True)
+    # ---------------------------------------------- kelola petugas
+    elif menu == M_KELOLA:
+        with st.container(border=True):
+            step("👥", "Daftar petugas", "Ubah data langsung di tabel (nama, No TLD, unit, status Aktif / Resign), tambah baris baru di bawah, lalu simpan.")
+            ver = st.session_state.setdefault("k_ver", 0)
+            cfgc = {"SID": None, "Unit": st.column_config.SelectboxColumn("Unit", options=units_all, width="medium"), "Status": st.column_config.SelectboxColumn("Status", options=["Aktif", "Resign"], width="small"),
+                    "Nama": st.column_config.TextColumn("Nama Petugas", width="large")}
+            ed = st.data_editor(roster, column_config=cfgc, num_rows="dynamic", use_container_width=True, hide_index=True, key=f"k_ed_{ver}", height=380)
+            if st.button("💾 Simpan daftar petugas", type="primary", key="k_save"):
+                try:
+                    e = ed.copy(); sid0 = dc.next_sid(roster)
+                    miss = e["SID"].isna(); e.loc[miss, "SID"] = range(sid0, sid0 + int(miss.sum())); e["SID"] = e["SID"].astype(int)
+                    e = e[e["Nama"].astype(str).str.strip().ne("") & e["Nama"].notna()]
+                    persist(ro=e.reset_index(drop=True)); st.session_state["k_ver"] = ver + 1; st.session_state["flash"] = f"{len(e)} petugas tersimpan."; st.rerun()
+                except Exception as e_: st.error(f"Gagal menyimpan: {e_}")
+        def lab(r_): return f"{r_['Nama']} — {r_['No TLD']} ({r_['Unit']})"
+        c1, c2 = st.columns(2)
+        with c1, st.container(border=True):
+            step("➕", "Tambah petugas baru", "Periode sebelum mulai bertugas otomatis ditandai 'Penambahan TLD Baru'.")
+            with st.form("f_add", clear_on_submit=True):
+                n1 = st.text_input("Nama petugas"); n2 = st.text_input("No TLD"); n3 = st.selectbox("Unit", units_all)
+                f1, f2 = st.columns(2); n4 = f1.number_input("Tahun mulai", 2015, 2100, dt.date.today().year); n5 = f2.selectbox("Mulai periode", range(len(labels)), format_func=lambda i: f"{i+1}. {labels[i]}")
+                if st.form_submit_button("Tambahkan", type="primary"):
+                    if not n1.strip(): st.error("Nama petugas wajib diisi.")
+                    else:
+                        sid = dc.next_sid(roster); ro = pd.concat([roster, pd.DataFrame([{"SID": sid, "No TLD": n2.strip() or None, "Nama": n1.strip(), "Unit": n3, "Status": "Aktif", "Catatan": None}])], ignore_index=True)
+                        sd = dc.mark_before(sdose, sid, n4, int(n5), "Penambahan TLD Baru", cfg.get("nbd_rs", 10.0)) if int(n5) > 0 else sdose
+                        persist(ro, sd); st.session_state["k_ver"] = ver + 1; st.session_state["flash"] = f"{n1.strip()} ditambahkan."; st.rerun()
+        with c2, st.container(border=True):
+            step("🔄", "Ganti TLD petugas", "No TLD diperbarui dan periode sebelumnya ditandai 'Pergantian TLD'.")
+            if roster.empty: st.caption("Belum ada petugas.")
+            else:
+                with st.form("f_swap", clear_on_submit=True):
+                    opts = {int(r_["SID"]): lab(r_) for _, r_ in roster.iterrows()}
+                    g1 = st.selectbox("Petugas", list(opts), format_func=lambda i: opts[i]); g2 = st.text_input("No TLD baru")
+                    h1, h2 = st.columns(2); g3 = h1.number_input("Tahun", 2015, 2100, dt.date.today().year); g4 = h2.selectbox("TLD baru mulai periode", range(len(labels)), format_func=lambda i: f"{i+1}. {labels[i]}")
+                    if st.form_submit_button("Ganti TLD", type="primary"):
+                        if not g2.strip(): st.error("No TLD baru wajib diisi.")
+                        else:
+                            ro = roster.copy(); m_ = ro["SID"].astype(int) == int(g1); old = ro.loc[m_, "No TLD"].iloc[0]
+                            ro.loc[m_, "No TLD"] = g2.strip(); ro.loc[m_, "Catatan"] = f"TLD {old} diganti {g2.strip()} ({g3})"
+                            sd = dc.mark_before(sdose, g1, g3, int(g4), "Pergantian TLD", cfg.get("nbd_rs", 10.0)) if int(g4) > 0 else sdose
+                            persist(ro, sd); st.session_state["k_ver"] = ver + 1; st.session_state["flash"] = f"No TLD {opts[int(g1)].split(' — ')[0]} diganti menjadi {g2.strip()}."; st.rerun()
+
 # =================================================== PARAMETER
-else:
+elif menu == MENU[4]:
     with st.container(border=True):
         step("⚙", "Parameter umum", "Dipakai untuk kategori usia dan perhitungan INAK/ESAK.")
         c1, c2, c3 = st.columns(3)
         cfg["bayi_max"] = c1.number_input("Bayi: usia maks (th)", value=int(cfg["bayi_max"]))
         cfg["dewasa_min"] = c2.number_input("Dewasa: usia min (th)", value=int(cfg["dewasa_min"]))
         cfg["bsf"] = c3.number_input("BSF", value=float(cfg["bsf"]), step=0.01)
+        cfg["nbd_rs"] = st.number_input("NBD / pembatas dosis RS pekerja (mSv per tahun)", value=float(cfg.get("nbd_rs", 10.0)), step=0.5)
         u1, u2 = st.columns(2); un = ["mGy.cm2", "Gy.cm2"]
         cfg["unit_dap_cath"] = u1.selectbox("Satuan DAP input Cathlab / Fluoroskopi", un, index=un.index(cfg["unit_dap_cath"]))
         cfg["unit_dap_dental"] = u2.selectbox("Satuan DAP input Dental", un, index=un.index(cfg["unit_dap_dental"]))
