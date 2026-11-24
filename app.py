@@ -4,6 +4,8 @@ Import -> isi protokol & dosis -> hitung & simpan -> unduh format BAPETEN."""
 import os, io, json, base64, datetime as dt
 import requests, pandas as pd, numpy as np, streamlit as st
 import dose_core as dc
+try: import scan_core as sc
+except Exception: sc = None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 def _f(name): return os.path.join(HERE, name)
@@ -446,6 +448,59 @@ elif menu in (M_ISI, M_REKAP, M_KELOLA):
                     st.session_state["s_ver"] = ver + 1; st.session_state["flash"] = f"Dosis {unit} tahun {tahun} tersimpan."; st.rerun()
                 except Exception as e: st.error(f"Gagal menyimpan: {e}")
             st.caption("Total dihitung otomatis dari semua periode yang berisi angka. Status 'Melebihi NBD RS' muncul bila total di atas pembatas dosis RS.")
+        # ---------- isi otomatis dari scan
+        with st.container(border=True):
+            step("📄", "Isi otomatis dari scan laporan TLD", "Unggah scan laporan satu periode (3 bulan). Dibaca dengan OCR, lalu Anda cek dulu sebelum diisikan ke tabel.")
+            if sc is None or not sc.tesseract_ok():
+                st.warning("OCR belum aktif di server ini. Tambahkan file `packages.txt` berisi `tesseract-ocr` dan `pypdfium2` di `requirements.txt`, lalu Reboot app.")
+            else:
+                a1, a2, a3 = st.columns([2, 1, 1])
+                upl = a1.file_uploader("Scan laporan (PDF / JPG / PNG)", type=["pdf", "jpg", "jpeg", "png"], key="scan_up")
+                pidx = a2.selectbox("Periode yang diisi", list(range(5)), format_func=lambda i: f"{i+1}. {labels[i] if i < len(labels) else 'P'+str(i+1)}", key="scan_p")
+                mode = a3.selectbox("Kolom angka dosis", ["Angka pertama", "Angka kedua", "Angka ketiga", "Angka terakhir"], key="scan_mode",
+                                    help="Jika laporan punya beberapa kolom angka (mis. Hp(10), Hp(0.07)), pilih kolom yang berisi dosis periode.")
+                if upl is not None and st.button("Baca scan", key="scan_go"):
+                    with st.spinner("Membaca scan (OCR)..."):
+                        try:
+                            rows_, pages_ = sc.scan_to_rows(upl.getvalue(), upl.name)
+                            st.session_state["scan"] = dict(rows=sc.match_roster(rows_, roster), name=upl.name, img=pages_[0] if pages_ else None, n_pages=len(pages_))
+                        except Exception as e_: st.error(f"Scan tidak dapat dibaca: {e_}")
+                S = st.session_state.get("scan")
+                if S:
+                    if not S["rows"]:
+                        st.error("Tidak ada baris petugas yang terbaca. Pastikan scan tegak, tajam (minimal sekitar 150 dpi) dan memuat kolom No TLD.")
+                    else:
+                        cur_old = sdose[(pd.to_numeric(sdose["Tahun"], errors="coerce") == int(tahun))].set_index(pd.to_numeric(sdose["SID"], errors="coerce")) if len(sdose) else None
+                        recs = []
+                        for r_ in S["rows"]:
+                            old = ""
+                            if r_["SID"] is not None and cur_old is not None and r_["SID"] in cur_old.index:
+                                v_ = cur_old.loc[r_["SID"], dc.PK[pidx]]; old = "" if v_ is None or (isinstance(v_, float) and pd.isna(v_)) else str(v_)
+                            recs.append({"Pakai": r_["status"] == "Cocok" and sc.pick(r_["nums"], mode) is not None, "No TLD (scan)": r_["tld"], "Nama (scan)": r_["nama"],
+                                         "Petugas cocok": r_["cocok"], "Status": r_["status"], "Dosis (mSv)": sc.pick(r_["nums"], mode), "Nilai lama": old,
+                                         "Angka terbaca": " | ".join("n/a" if x is None else f"{x:g}" for x in r_["nums"]), "_sid": r_["SID"]})
+                        pv = pd.DataFrame(recs)
+                        matched = {x for x in pv["_sid"].dropna().astype(int)}
+                        act = roster[(roster["Status"].fillna("Aktif") != "Resign")]
+                        missing = act[~act["SID"].astype(int).isin(matched)]
+                        q = st.columns(4); q[0].metric("Baris terbaca", len(pv)); q[1].metric("Cocok", int((pv["Status"] == "Cocok").sum()))
+                        q[2].metric("Perlu dicek nama", int((pv["Status"] == "Cek nama").sum())); q[3].metric("Tidak ditemukan", int((pv["Status"] == "Tidak ditemukan").sum()))
+                        if len(missing): st.warning(f"{len(missing)} petugas aktif tidak terbaca di scan (mungkin terlewat OCR atau ada di halaman lain): " + ", ".join(missing["Nama"].astype(str).head(12)) + (" ..." if len(missing) > 12 else ""))
+                        edp = st.data_editor(pv, hide_index=True, use_container_width=True, key=f"scan_ed_{S['name']}_{mode}_{pidx}",
+                                             disabled=["No TLD (scan)", "Nama (scan)", "Petugas cocok", "Status", "Nilai lama", "Angka terbaca"],
+                                             column_config={"_sid": None, "Pakai": st.column_config.CheckboxColumn("Pakai", width="small"), "Dosis (mSv)": st.column_config.NumberColumn("Dosis (mSv)", format="%g")})
+                        if S.get("img") is not None:
+                            with st.expander("Lihat gambar scan (halaman 1) untuk membandingkan"): st.image(S["img"], use_container_width=True)
+                        use = edp[edp["Pakai"] & edp["_sid"].notna() & edp["Dosis (mSv)"].notna()]
+                        ow = int((use["Nilai lama"].astype(str).str.strip().ne("") & (use["Nilai lama"].astype(str) != use["Dosis (mSv)"].map(lambda x: f"{x:g}"))).sum())
+                        if ow: st.info(f"{ow} baris akan menimpa nilai lama yang berbeda.")
+                        b1, b2 = st.columns([1, 3])
+                        if b1.button(f"Isi {len(use)} dosis ke periode {pidx+1}", type="primary", key="scan_fill", disabled=len(use) == 0):
+                            sd = sdose
+                            for _, u_ in use.iterrows(): sd = dc.staff_set_period(sd, int(u_["_sid"]), int(tahun), pidx, float(u_["Dosis (mSv)"]), cfg.get("nbd_rs", 10.0))
+                            persist(sd=sd); st.session_state.pop("scan", None); st.session_state["s_ver"] = ver + 1
+                            st.session_state["flash"] = f"{len(use)} dosis dari scan diisikan ke periode {pidx+1} tahun {int(tahun)}. Cek tabel lalu pastikan sudah tersimpan."; st.rerun()
+                        b2.caption("Hanya baris dengan status Cocok yang otomatis dicentang. Baris 'Cek nama' perlu Anda periksa dulu. Data baru masuk setelah klik tombol Isi.")
     # ---------------------------------------------- rekap
     elif menu == M_REKAP and not roster.empty:
         yrs = sorted(set(pd.to_numeric(sdose["Tahun"], errors="coerce").dropna().astype(int)) | {dt.date.today().year}, reverse=True)

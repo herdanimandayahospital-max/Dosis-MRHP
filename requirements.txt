@@ -3,3 +3,5 @@ pandas
 numpy
 requests
 openpyxl
+pypdfium2
+pillow

@@ -587,3 +587,14 @@ def bar_svg(title, labels, values, ref=None, ref_label="NBD RS", unit="mSv", col
     if ref:
         s.append(f'<line x1="{ml}" x2="{W-mr}" y1="{y(ref):.1f}" y2="{y(ref):.1f}" stroke="#c0392b" stroke-dasharray="6 4"/><text x="{W-mr}" y="{y(ref)-5:.1f}" text-anchor="end" font-size="11" fill="#c0392b">{_h.escape(ref_label)} {ref:g} {unit}</text>')
     s.append("</svg>"); return f'<div style="overflow-x:auto">{"".join(s)}</div>'
+
+
+def staff_set_period(sdose, sid, tahun, pidx, value, nbd=10.0):
+    """Isi satu periode (0-4) untuk satu petugas/tahun. value=None -> tidak diubah."""
+    s = sdose.copy(); m = (pd.to_numeric(s["Tahun"], errors="coerce") == int(tahun)) & (pd.to_numeric(s["SID"], errors="coerce") == int(sid))
+    if not m.any():
+        s = pd.concat([s, pd.DataFrame([{"Tahun": int(tahun), "SID": int(sid), **{p: None for p in PK}, "NBD": nbd, "Catatan": None}])], ignore_index=True)
+        m = (pd.to_numeric(s["Tahun"], errors="coerce") == int(tahun)) & (pd.to_numeric(s["SID"], errors="coerce") == int(sid))
+    s[PK[pidx]] = s[PK[pidx]].astype(object)
+    s.loc[m, PK[pidx]] = ("%g" % float(value)) if value is not None else None
+    return s
