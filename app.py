@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Dose Monitoring - Mandaya Royal Hospital Puri.
+"""Monitoring Dosis Pasien dan Dosis Pekerja Radiasi - Mandaya Royal Hospital Puri.
 Import -> isi protokol & dosis -> hitung & simpan -> unduh format BAPETEN."""
 import os, io, json, base64, datetime as dt
 import requests, pandas as pd, numpy as np, streamlit as st
@@ -9,7 +9,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 def _f(name): return os.path.join(HERE, name)
 LOGO, LOGO_W = _f("Mandaya Logo.png"), _f("Mandaya Logo White.png")
 RS = "Mandaya Royal Hospital Puri"
-st.set_page_config(page_title="Dose Monitoring - MRHP", page_icon=LOGO if os.path.exists(LOGO) else None, layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Monitoring Dosis Pasien & Pekerja Radiasi - MRHP", page_icon=LOGO if os.path.exists(LOGO) else None, layout="wide", initial_sidebar_state="expanded")
 
 def _b64(p):
     try: return base64.b64encode(open(p, "rb").read()).decode()
@@ -44,7 +44,7 @@ button[data-baseweb="tab"]{border-radius:10px 10px 0 0;padding:8px 16px}
 .side-logo img{width:185px;max-width:88%}
 [data-testid="stSidebar"] .stButton>button>div{width:100%;justify-content:flex-start !important;text-align:left !important}
 [data-testid="stSidebar"] .stButton>button p{text-align:left !important;width:100%}
-[data-testid="stSidebar"] .stButton>button{width:100%;justify-content:flex-start;text-align:left;background:transparent;border:1px solid transparent;color:#fff;border-radius:12px;min-height:2.7rem;padding:.35rem 1rem;font-size:.97rem}
+[data-testid="stSidebar"] .stButton>button{width:calc(100% - 10px);margin-left:10px;justify-content:flex-start;text-align:left;background:transparent;border:1px solid transparent;color:#fff;border-radius:12px;min-height:2.7rem;padding:.35rem 1rem;font-size:.97rem}
 [data-testid="stSidebar"] .stButton>button:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.25);color:#fff}
 [data-testid="stSidebar"] .stButton>button[kind="primary"]{background:#fff;color:#073763;border-color:#fff}
 [data-testid="stSidebar"] .stButton>button[kind="primary"] p{color:#073763 !important;font-weight:700}
@@ -65,7 +65,9 @@ div[data-testid="stRadio"] div[role="radiogroup"]>label:has(input:checked) p{col
 .rb{display:inline-block;border-radius:999px;padding:3px 10px;font-size:.78rem;font-weight:600;white-space:nowrap}
 .rb.ok{background:#d5eedd;color:#1e6b3a}.rb.bad{background:#f8d0d0;color:#9c1c1c}.rb.na{background:#eceff3;color:#5C7691}
 @media (max-width:768px){.drl-row{grid-template-columns:1fr}}
-.side-t{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#a9c7de !important;margin:16px 0 4px 6px}
+.side-t{display:flex;align-items:center;gap:8px;font-size:.74rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#8fd3ea !important;margin:26px 0 8px 2px;padding:0 4px 8px 4px;border-bottom:1px solid rgba(255,255,255,.2)}
+.side-t::before{content:"";width:4px;height:14px;border-radius:2px;background:#7fd1ea}
+.side-logo+div .side-t,[data-testid="stSidebar"] .side-logo ~ div:first-of-type .side-t{margin-top:6px}
 .side-card{background:rgba(255,255,255,.1);border-radius:12px;padding:12px 16px;margin-top:18px;font-size:.85rem;line-height:1.5}
 @media (max-width:768px){.block-container{padding:3rem .6rem 2rem !important}.hero{padding:14px 16px}.hero .t{font-size:1.2rem}.badge{margin-left:0}}
 </style>""", unsafe_allow_html=True)
@@ -130,7 +132,7 @@ def cfg_save(cfg):
 # ---------- header
 logo = _b64(LOGO_W)
 badge = '<span class="badge b-ok">● Database terhubung</span>' if ONLINE else '<span class="badge b-warn">● Mode lokal (belum tersimpan permanen)</span>'
-st.markdown(f'<div class="hero">{f"<img src=data:image/png;base64,{logo}>" if logo else ""}<div><div class="t">Dose Monitoring Pasien</div>'
+st.markdown(f'<div class="hero">{f"<img src=data:image/png;base64,{logo}>" if logo else ""}<div><div class="t">Monitoring Dosis Pasien dan Dosis Pekerja Radiasi</div>'
             f'<div class="s">{RS} · Departemen Radiologi · Laporan BAPETEN</div></div>{badge}</div>', unsafe_allow_html=True)
 
 if PW and not st.session_state.get("dose_ok"):
@@ -172,7 +174,7 @@ if st.session_state.get("flash"): st.success(st.session_state.pop("flash"))
 
 MENU = ["Import Data", "Database Dosis Pasien", "Download BAPETEN", "Dashboard", "⚙️ Parameter"]
 M_ISI, M_REKAP, M_KELOLA = "Isi Dosis Pekerja", "Rekap Dosis Pekerja", "Kelola Petugas"
-GROUPS = [("Dosis Pasien", MENU[:4]), ("Dosis Pekerja", [M_ISI, M_REKAP, M_KELOLA]), ("", [MENU[4]])]
+GROUPS = [("Dosis Pasien", MENU[:4]), ("Dosis Pekerja Radiasi", [M_ISI, M_REKAP, M_KELOLA]), ("Pengaturan", [MENU[4]])]
 with st.sidebar:
     if logo: st.markdown(f'<div class="side-logo"><img src="data:image/png;base64,{logo}"></div>', unsafe_allow_html=True)
     if "menu" not in st.session_state: st.session_state["menu"] = MENU[0]
