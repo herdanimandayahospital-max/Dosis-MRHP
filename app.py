@@ -462,13 +462,17 @@ elif menu in (M_ISI, M_REKAP, M_KELOLA):
                 if upl is not None and st.button("Baca scan", key="scan_go"):
                     with st.spinner("Membaca scan (OCR)..."):
                         try:
-                            rows_, pages_ = sc.scan_to_rows(upl.getvalue(), upl.name)
-                            st.session_state["scan"] = dict(rows=sc.match_roster(rows_, roster), name=upl.name, img=pages_[0] if pages_ else None, n_pages=len(pages_))
+                            rows_, pages_, raw_ = sc.scan_to_rows(upl.getvalue(), upl.name)
+                            st.session_state["scan"] = dict(rows=sc.match_roster(rows_, roster), name=upl.name, img=pages_[0] if pages_ else None, n_pages=len(pages_), raw=raw_)
                         except Exception as e_: st.error(f"Scan tidak dapat dibaca: {e_}")
                 S = st.session_state.get("scan")
                 if S:
+                    with st.expander("Hasil OCR mentah (untuk diagnosa)"):
+                        for pg_, ls_, lo_ in S.get("raw", []):
+                            st.caption(f"Halaman {pg_} · {len(ls_)} baris terbaca" + (" · mode longgar (format No TLD tidak dikenali)" if lo_ else ""))
+                            st.code("\n".join(ls_[:80]) or "(tidak ada teks terbaca)")
                     if not S["rows"]:
-                        st.error("Tidak ada baris petugas yang terbaca. Pastikan scan tegak, tajam (minimal sekitar 150 dpi) dan memuat kolom No TLD.")
+                        st.error("Tidak ada baris petugas yang terbaca. Cek hasil OCR mentah di atas: bila teks kosong atau acak, scan kurang tajam (butuh sekitar 150 dpi ke atas) atau halaman miring/gelap. Bila teks terbaca tetapi tidak ada angka dosis berdesimal, kirim contoh scan agar format kolomnya bisa ditambahkan.")
                     else:
                         cur_old = sdose[(pd.to_numeric(sdose["Tahun"], errors="coerce") == int(tahun))].set_index(pd.to_numeric(sdose["SID"], errors="coerce")) if len(sdose) else None
                         recs = []
