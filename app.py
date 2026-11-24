@@ -473,6 +473,10 @@ elif menu in (M_ISI, M_REKAP, M_KELOLA):
                 st.markdown(f"**{u}**")
                 v = g[["No TLD", "Nama"] + dc.PK + ["NBD", "Total", "Status"]].copy(); v.columns = ["No TLD", "Nama Petugas"] + [labels[i] if i < len(labels) else p for i, p in enumerate(dc.PK)] + ["NBD RS (mSv)", "Total 1 Tahun (mSv)", "Status"]
                 v.insert(0, "No", range(1, len(v) + 1))
+                _seen = {}; _cols = []
+                for _c in v.columns:   # nama periode boleh kembar (mis. Des-Feb ada 2x) -> beri penanda agar tabel valid
+                    _seen[_c] = _seen.get(_c, 0) + 1; _cols.append(_c if _seen[_c] == 1 else f"{_c} ({_seen[_c]})")
+                v.columns = _cols
                 st.dataframe(v, use_container_width=True, hide_index=True)
             d1, d2 = st.columns(2)
             d1.download_button("⬇️ Download Excel", dc.staff_excel(tahun, tbl, labels), file_name=f"Rekap_Dosis_Pekerja_{tahun}.xlsx", type="primary", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
