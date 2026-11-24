@@ -69,6 +69,31 @@ def parse_lines(lines, page=1):
         rows.append(dict(page=page, tld=tld, nama=" ".join(name), nums=vals, raw=txt))
     return rows
 
+def _clean_words(toks):
+    return [w for w in (re.sub(r"^[\[\]|()_:;,]+|[\[\]|_:;]+$", "", t[0]) for t in toks) if w]
+
+def parse_lines_loose(lines, page=1):
+    """Cadangan: baris mana pun yang berisi nama (huruf) + angka dosis berdesimal. No TLD = token berformat kode (huruf/angka, ada digit)."""
+    rows = []
+    for toks in lines:
+        words = _clean_words(toks)
+        if len(words) < 3: continue
+        alpha = [w for w in words if re.fullmatch(r"[A-Za-z][A-Za-z.,'\-]{1,}", w)]
+        if len(alpha) < 2: continue
+        dec = [w for w in words if re.fullmatch(r"<?\d+[.,]\d+", w)]
+        if not dec: continue
+        code = next((w for w in words if re.fullmatch(r"[A-Za-z]{0,2}\d[\dA-Za-z\-./]{2,}", w) and not re.fullmatch(r"<?\d+[.,]\d+", w)), "")
+        # angka dosis = token angka (desimal atau bulat kecil) setelah kata terakhir bertipe nama
+        last = max(i for i, w in enumerate(words) if w in alpha)
+        nums = []
+        for w in words[last + 1:]:
+            wn = w.replace(",", ".")
+            if SPECIAL.match(w): nums.append(None)
+            elif re.fullmatch(r"<?\d+(\.\d+)?", wn): nums.append(0.0 if wn.startswith("<") else float(wn))
+        if not nums: continue
+        rows.append(dict(page=page, tld=code, nama=" ".join(w for w in alpha if w.upper() not in ("TLD", "NO", "ID")), nums=nums, raw=" ".join(words)))
+    return rows
+
 def pick(nums, mode):
     n = [x for x in nums]
     i = {"Angka pertama": 0, "Angka kedua": 1, "Angka ketiga": 2, "Angka terakhir": -1}.get(mode, 0)
@@ -95,12 +120,19 @@ def match_roster(rows, roster):
     return out
 
 def scan_to_rows(data, filename, psms=(4, 6)):
-    """Coba beberapa mode segmentasi OCR per halaman, pakai yang menghasilkan baris petugas terbanyak."""
-    pages = render_pages(data, filename); rows = []
+    """Per halaman: coba rotasi 0/90/270/180 dan mode OCR; parser ketat dulu, longgar bila tidak ada hasil.
+    Mengembalikan (baris, halaman, teks_mentah)."""
+    pages = render_pages(data, filename); rows = []; raw_out = []
     for i, im in enumerate(pages, 1):
-        best = []
-        for psm in psms:
-            got = parse_lines(ocr_lines(im, psm), i)
-            if len(got) > len(best): best = got
-        rows += best
-    return rows, pages
+        best, best_lines, best_loose = [], [], False
+        for rot in (0, 90, 270, 180):
+            img = im.rotate(rot, expand=True) if rot else im
+            for psm in psms:
+                lines = ocr_lines(img, psm); got = parse_lines(lines, i); loose = False
+                if not got: got = parse_lines_loose(lines, i); loose = True
+                if len(got) > len(best) or (not best and len(lines) > len(best_lines)):
+                    if len(got) > len(best) or not best: best, best_loose = got, loose
+                    best_lines = lines if len(got) >= len(best) else best_lines
+            if len(best) >= 5: break
+        rows += best; raw_out.append((i, [" ".join(t[0] for t in l) for l in best_lines], best_loose))
+    return rows, pages, raw_out
