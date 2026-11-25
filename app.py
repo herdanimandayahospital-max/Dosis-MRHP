@@ -137,12 +137,7 @@ badge = '<span class="badge b-ok">● Database terhubung</span>' if ONLINE else 
 st.markdown(f'<div class="hero">{f"<img src=data:image/png;base64,{logo}>" if logo else ""}<div><div class="t">Monitoring Dosis Pasien dan Dosis Pekerja Radiasi</div>'
             f'<div class="s">{RS} · Departemen Radiologi · Laporan BAPETEN</div></div>{badge}</div>', unsafe_allow_html=True)
 
-if PW and not st.session_state.get("dose_ok"):
-    with st.container(border=True):
-        st.markdown("**Masuk**")
-        p = st.text_input("Password author", type="password")
-        if st.button("Masuk", type="primary") and p == PW: st.session_state["dose_ok"] = True; st.rerun()
-    st.stop()
+def is_author(): return (not PW) or bool(st.session_state.get("dose_ok"))   # tanpa AUTHOR_PASSWORD di Secrets = terbuka
 if not ONLINE:
     st.info("**Mode lokal** — semua fitur bisa dipakai, tetapi data hilang jika halaman ditutup. Hubungkan Supabase di *Settings → Secrets* agar tersimpan permanen.")
 
@@ -176,7 +171,7 @@ if st.session_state.get("flash"): st.success(st.session_state.pop("flash"))
 
 MENU = ["Import Data", "Database Dosis Pasien", "Download BAPETEN", "Dashboard", "⚙️ Parameter"]
 M_ISI, M_REKAP, M_KELOLA = "Isi Dosis Pekerja", "Rekap Dosis Pekerja", "Kelola Petugas"
-GROUPS = [("Dosis Pasien", MENU[:4]), ("Dosis Pekerja Radiasi", [M_ISI, M_REKAP, M_KELOLA]), ("Pengaturan", [MENU[4]])]
+GROUPS = [("Dosis Pasien", MENU[:4]), ("Dosis Pekerja Radiasi", [M_ISI, M_REKAP, M_KELOLA])] + ([("Pengaturan", [MENU[4]])] if is_author() else [])
 with st.sidebar:
     if logo: st.markdown(f'<div class="side-logo"><img src="data:image/png;base64,{logo}"></div>', unsafe_allow_html=True)
     if "menu" not in st.session_state: st.session_state["menu"] = MENU[0]
@@ -185,7 +180,19 @@ with st.sidebar:
         for m_ in items_:
             if st.button(m_, key=f"nav_{m_}", type="primary" if st.session_state["menu"] == m_ else "secondary", use_container_width=True):
                 st.session_state["menu"] = m_; st.rerun()
+    if st.session_state["menu"] == MENU[4] and not is_author(): st.session_state["menu"] = MENU[0]
     menu = st.session_state["menu"]
+    st.markdown('<div class="side-t">Mode Author</div>', unsafe_allow_html=True)
+    if PW and not is_author():
+        with st.expander("🔒 Masuk mode author"):
+            _p = st.text_input("Password author", type="password", key="pw_in")
+            if st.button("Masuk", key="pw_go", use_container_width=True):
+                if _p == PW: st.session_state["dose_ok"] = True; st.rerun()
+                else: st.error("Password salah.")
+    elif PW:
+        st.caption("✅ Mode author aktif")
+        if st.button("Keluar mode author", key="pw_out", use_container_width=True):
+            st.session_state["dose_ok"] = False; st.session_state["menu"] = MENU[0]; st.rerun()
     tot = len(master)
     st.markdown(f'<div class="side-card"><b>Database</b><br>{tot:,} data pasien<br>'
                 + ("● terhubung ke Supabase" if ONLINE else "● mode lokal (belum permanen)") + '</div>', unsafe_allow_html=True)
